@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nirc2pol"
+version = "0.0.0"
+description = "Polarimetric differential imaging pipeline for Keck/NIRC2."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "UCSB Exoplanet Polarimetry Lab" }]
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy",
+    "jax",
+    "jaxlib",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "black",
+]
+
+[tool.setuptools.packages.find]
+include = ["nirc2pol*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
