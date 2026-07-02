@@ -8,25 +8,44 @@ Reference: Schmid et al. (2006), "Limb polarization of Uranus and Neptune".
 """
 from __future__ import annotations
 
-import jax.numpy as jnp
+import numpy as np
 
 from nirc2pol.instruments.base import PolarimetryData
 
 
 def compute_radial_stokes(dataset: PolarimetryData) -> None:
-    """Compute (Qφ, Uφ) from (Q, U) and the star center.
+    """Compute (Qφ, Uφ) from the median Stokes cube and the star center.
 
     Requires ``dataset.output["star_center"]`` (populated by
-    :func:`register_frames`). Writes
-    ``dataset.output["radial_stokes_cube"]`` of shape
-    ``(N_sets, 2, ny, nx)`` — first axis is ``(Qφ, Uφ)``.
+    :func:`register_frames`) and ``dataset.output["median_stokes_cube"]``.
+    Writes ``dataset.output["radial_stokes_cube"]`` of shape ``(2, ny, nx)`` —
+    first axis is ``(Qφ, Uφ)``.
 
     Sign convention: Qφ > 0 for azimuthal polarization (disk-like),
     Qφ < 0 for radial polarization.
     """
-    raise NotImplementedError
+    median = dataset.output["median_stokes_cube"]  # (3, ny, nx) = (I, Q, U)
+    q, u = median[1], median[2]
+    cx, cy = dataset.output["star_center"][0]
+    qphi, uphi = radial_stokes_single(q, u, (cx, cy))
+    dataset.output["radial_stokes_cube"] = np.stack([qphi, uphi])
 
 
-def radial_stokes_single(q: jnp.ndarray, u: jnp.ndarray, center_xy: tuple[float, float]) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """(Qφ, Uφ) for a single (Q, U) pair around the given center."""
-    raise NotImplementedError
+def radial_stokes_single(
+    q: np.ndarray,
+    u: np.ndarray,
+    center_xy: tuple[float, float],
+) -> tuple[np.ndarray, np.ndarray]:
+    """(Qφ, Uφ) for a single (Q, U) pair around the given center.
+
+    Uses ``φ = atan2(y - cy, x - cx)`` and the standard Schmid (2006)
+    rotation:
+    ``Qφ = Q cos(2φ) + U sin(2φ)``, ``Uφ = -Q sin(2φ) + U cos(2φ)``.
+    """
+    cx, cy = center_xy
+    ys, xs = np.indices(q.shape)
+    phi = np.arctan2(ys - cy, xs - cx)
+    c2, s2 = np.cos(2.0 * phi), np.sin(2.0 * phi)
+    qphi = q * c2 + u * s2
+    uphi = -q * s2 + u * c2
+    return qphi, uphi
