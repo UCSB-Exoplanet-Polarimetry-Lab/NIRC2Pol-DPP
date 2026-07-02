@@ -1,6 +1,8 @@
 # NIRC2-Pol-DPP
 NIRC2 Polarimetry Data Processing Pipeline
 
+!! heavily under construction !!
+
 inspired by:
 
 jayke's julia reduction: https://github.com/jsnguyen/AIR.jl
