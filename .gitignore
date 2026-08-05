@@ -4,8 +4,7 @@ __pycache__/
 .ipynb_checkpoints/
 .DS_Store
 
-# This branch carries the pipeline only. No science data, no reduction
-# products, no scratch: keep it that way.
+# This branch carries the pipeline only. No science data
 *.fits
 *.fits.gz
 *.png
