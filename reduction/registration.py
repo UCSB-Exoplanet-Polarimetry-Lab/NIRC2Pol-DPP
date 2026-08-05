@@ -57,8 +57,6 @@ def find_center_smooth(data, smooth_sigma=3.0, fit_window=15):
     starting guess or crop region."""
     from scipy.ndimage import gaussian_filter, median_filter
 
-    from utils.fitting import fit_2d_gaussian
-
     # median filter first: annihilates isolated hot pixels / cosmic rays
     # that could survive Gaussian smoothing alone
     smoothed = gaussian_filter(median_filter(np.nan_to_num(data), size=3),
@@ -284,7 +282,6 @@ def find_center_min(data, search_radius=30):
 
 def find_center_gaussian(data, fixed_sigma=5.0, quantile=0.9999999):
     """2D Gaussian fit seeded from the quantile peak."""
-    from utils.fitting import fit_2d_gaussian
 
     cy, cx = argquantile(data, quantile)
     outside = ~make_circle_mask(data.shape, 50, center=(cy, cx))
@@ -446,3 +443,29 @@ def register_frames_to_template(images, template=None, upsample=20):
         aligned.append(translate(im, dy, dx))
         shifts.append((dy, dx))
     return aligned, shifts
+
+def fit_2d_gaussian(data, initial_guess, fixed_sigma=None):
+    """Least-squares fit of a 2D Gaussian to an image.
+
+    ``initial_guess`` is ``[amplitude, x0, y0, sigma_x, sigma_y, offset]``,
+    or ``[amplitude, x0, y0, offset]`` when ``fixed_sigma`` is given.
+    Coordinates are 0-based pixel indices (x = column, y = row).
+
+    Returns the fitted parameter array in the same order as the guess.
+    """
+    data = np.asarray(data, dtype=float)
+    rows, cols = data.shape
+    yy, xx = np.mgrid[:rows, :cols]
+
+    if fixed_sigma is not None:
+        def model(p):
+            amp, x0, y0, offset = p
+            return gaussian_2d(xx, yy, amp, x0, y0, fixed_sigma, fixed_sigma, offset)
+    else:
+        def model(p):
+            amp, x0, y0, sx, sy, offset = p
+            return gaussian_2d(xx, yy, amp, x0, y0, sx, sy, offset)
+
+    result = least_squares(lambda p: (data - model(p)).ravel(),
+                           np.asarray(initial_guess, dtype=float))
+    return result.x
