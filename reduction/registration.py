@@ -1,0 +1,448 @@
+"""Image registration: locate the star and center/derotate frames.
+
+There are several reasonable ways to find the star, so the method is
+swappable (SPIE Sec. 3.3): pass ``method=`` one of the built-in names below
+or any callable ``f(data) -> (cy, cx)`` to drop in your own algorithm.
+
+Built-in methods:
+
+- ``"smooth_peak"`` (default) — peak of the Gaussian-smoothed image,
+  refined to subpixel with a Gaussian fit in a small window around it.
+  Fully automatic: no starting guess, crop region, or tuning required.
+- ``"quantile_peak"`` — pixel at a high quantile of the flux
+  distribution; robust to isolated hot pixels.
+- ``"max"`` — brightest pixel.
+- ``"min"`` — darkest pixel near the core, for saturated PSFs (searched
+  within ``search_radius`` of the quantile peak).
+- ``"gaussian"`` — 2D Gaussian fit seeded from the quantile peak.
+- ``"centroid"`` — flux-weighted centroid of everything above a threshold.
+  For extended sources; still pulled by bright surface features.
+- ``"silhouette"`` — geometric center of the thresholded source region,
+  ignoring brightness variations within it. Suits a resolved body (planet,
+  moon) whose disk carries hotspots or albedo features.
+- ``"symmetry"`` — center of symmetry, found by cross-correlating the image
+  with its own 180-degree rotation. Uses the whole source, needs no
+  template, threshold, or starting guess; the natural choice for a round
+  resolved body.
+- ``"wings"`` — align on the PSF wings, masking out the core. The method
+  for coronagraphic data: the occulted core carries no reliable position
+  information, but the extended wings stay symmetric about the true star.
+- ``"crosscorr"`` — cross-correlate against a ``template=`` image and
+  return the position matching the template's center. Use when you want a
+  whole sequence aligned to one reference (see
+  :func:`register_frames_to_template`).
+
+Works on 2D frames and on ``(2, ny, nx)`` beam stacks (both beams shifted
+by the offset measured on their mean, so the beams stay registered to each
+other).
+"""
+
+from __future__ import annotations
+
+import logging
+
+import numpy as np
+
+from utils.frame import Frame, framelist_to_cube
+from utils.imutils import (argquantile, crop, make_circle_mask,
+                           rotate_image_center, translate)
+
+log = logging.getLogger(__name__)
+
+
+def find_center_smooth(data, smooth_sigma=3.0, fit_window=15):
+    """Fully automatic star finder: peak of the Gaussian-smoothed image
+    (immune to hot pixels and cosmic rays), refined to subpixel with a 2D
+    Gaussian fit in a ``fit_window`` box around the smoothed peak. Needs no
+    starting guess or crop region."""
+    from scipy.ndimage import gaussian_filter, median_filter
+
+    from utils.fitting import fit_2d_gaussian
+
+    # median filter first: annihilates isolated hot pixels / cosmic rays
+    # that could survive Gaussian smoothing alone
+    smoothed = gaussian_filter(median_filter(np.nan_to_num(data), size=3),
+                               smooth_sigma)
+    cy, cx = np.unravel_index(np.argmax(smoothed), smoothed.shape)
+
+    half = fit_window // 2
+    y0 = min(max(0, cy - half), data.shape[0] - fit_window)
+    x0 = min(max(0, cx - half), data.shape[1] - fit_window)
+    window = np.nan_to_num(data[y0:y0 + fit_window, x0:x0 + fit_window])
+
+    background = float(np.median(window))
+    try:
+        params = fit_2d_gaussian(
+            window,
+            [window.max() - background, cx - x0, cy - y0, background],
+            fixed_sigma=smooth_sigma)
+        fit_cy, fit_cx = y0 + params[2], x0 + params[1]
+    except Exception:
+        log.warning("Subpixel Gaussian refinement failed, using smoothed "
+                    "peak pixel")
+        return float(cy), float(cx)
+
+    # reject a fit that wandered out of its window; the peak is still good
+    if not (y0 <= fit_cy <= y0 + fit_window and x0 <= fit_cx <= x0 + fit_window):
+        log.warning("Subpixel fit left the window, using smoothed peak pixel")
+        return float(cy), float(cx)
+    return float(fit_cy), float(fit_cx)
+
+
+def _prepare_source_image(data, smooth_sigma=2.0, clip_percentile=90.0):
+    """Smooth an image and clip its bright tail, returning
+    ``(prepared, source_level)``.
+
+    Clipping matters for resolved bodies: a volcano or storm can outshine
+    the disk several times over, and any measure referenced to the peak
+    then describes the feature instead of the body. The clip level is a
+    percentile *of the source pixels only*, so a small bright feature
+    cannot set the scale. ``source_level`` is the clipped maximum, i.e. a
+    robust estimate of the body's own surface brightness.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    smoothed = gaussian_filter(np.nan_to_num(data), smooth_sigma)
+
+    # rough source region, then a robust brightness level within it
+    rough = smoothed > 0.2 * np.nanmax(smoothed)
+    if not rough.any():
+        return smoothed, float(np.nanmax(smoothed))
+
+    level = float(np.nanpercentile(smoothed[rough], clip_percentile))
+    if level <= 0:
+        level = float(np.nanmax(smoothed))
+    return np.minimum(smoothed, level), level
+
+
+def _threshold_mask(data, threshold_frac, smooth_sigma, clip_percentile=90.0):
+    """Boolean mask of the source: pixels above ``threshold_frac`` of the
+    body's own (clip-robust) brightness, largest connected region only."""
+    from scipy.ndimage import label
+
+    prepared, level = _prepare_source_image(data, smooth_sigma,
+                                            clip_percentile)
+    mask = prepared > threshold_frac * level
+
+    labels, n = label(mask)
+    if n > 1:  # keep the largest blob, drop noise specks
+        sizes = np.bincount(labels.ravel())
+        sizes[0] = 0
+        mask = labels == sizes.argmax()
+    return mask
+
+
+def find_center_centroid(data, threshold_frac=0.2, smooth_sigma=2.0):
+    """Flux-weighted centroid of the source region. Suits extended objects;
+    bright surface features still pull the centroid toward them, so prefer
+    ``symmetry`` or ``crosscorr`` for a body with strong features."""
+    mask = _threshold_mask(data, threshold_frac, smooth_sigma)
+    prepared, _ = _prepare_source_image(data, smooth_sigma)
+    weights = np.where(mask, prepared, 0.0)
+    total = weights.sum()
+    if total <= 0:
+        log.warning("Centroid found no flux, falling back to smoothed peak")
+        return find_center_smooth(data)
+    yy, xx = np.mgrid[:data.shape[0], :data.shape[1]]
+    return float((yy * weights).sum() / total), float((xx * weights).sum() / total)
+
+
+def find_center_silhouette(data, threshold_frac=0.5, smooth_sigma=2.0):
+    """Geometric center of the source silhouette: the unweighted mean
+    position of all pixels above the threshold.
+
+    Because it ignores how bright each pixel is, this locates the center of
+    a resolved body's disk even when volcanoes, storms, or albedo features
+    dominate the flux — unlike peak or centroid methods. Choose
+    ``threshold_frac`` near half the typical disk brightness so the mask
+    traces the limb.
+    """
+    mask = _threshold_mask(data, threshold_frac, smooth_sigma)
+    if not mask.any():
+        log.warning("Silhouette mask empty, falling back to smoothed peak")
+        return find_center_smooth(data)
+    ys, xs = np.nonzero(mask)
+    return float(ys.mean()), float(xs.mean())
+
+
+def _phase_shift(reference, moving, upsample=20):
+    """Sub-pixel shift (dy, dx) that best aligns ``moving`` onto
+    ``reference``, via upsampled phase cross-correlation."""
+    from skimage.registration import phase_cross_correlation
+
+    shift, _, _ = phase_cross_correlation(
+        np.nan_to_num(reference), np.nan_to_num(moving),
+        upsample_factor=upsample, normalization=None)
+    return float(shift[0]), float(shift[1])
+
+
+def find_center_symmetry(data, upsample=20, smooth_sigma=2.0,
+                         clip_percentile=90.0):
+    """Center of symmetry of a source, from cross-correlation of the image
+    with its own 180-degree rotation.
+
+    For a source symmetric about ``c``, the rotated copy is displaced by
+    ``2c`` relative to the original, so the correlation peak gives the
+    center directly. This uses all the source's flux (not just a peak or a
+    threshold) and needs no template or starting guess, which makes it a
+    good default for round resolved bodies. Bright surface features are
+    clipped first (see :func:`_prepare_source_image`), so a volcano or
+    storm does not drag the correlation peak toward itself.
+    """
+    img, _ = _prepare_source_image(data, smooth_sigma, clip_percentile)
+    flipped = img[::-1, ::-1]
+    dy, dx = _phase_shift(img, flipped, upsample)
+
+    # flipping maps index i to (N-1-i); a shift s between image and flip
+    # puts the symmetry center at c = (N - 1 + s) / 2 along each axis
+    # (verified against synthetic disks at known positions)
+    ny, nx = img.shape
+    return (ny - 1 + dy) / 2.0, (nx - 1 + dx) / 2.0
+
+
+def find_center_crosscorr(data, template, template_center=None, upsample=20):
+    """Locate the source by cross-correlating ``data`` against ``template``.
+
+    Returns the position in ``data`` corresponding to ``template_center``
+    (default: the template's geometric center), so a whole sequence can be
+    aligned to one reference image regardless of source morphology.
+    """
+    if template_center is None:
+        template_center = ((template.shape[0] - 1) / 2,
+                           (template.shape[1] - 1) / 2)
+
+    dy, dx = _phase_shift(np.nan_to_num(data), np.nan_to_num(template),
+                          upsample)
+    return template_center[0] + dy, template_center[1] + dx
+
+
+def find_center_wings(data, r_inner=25.0, r_outer=120.0, upsample=20,
+                      smooth_sigma=1.0, iterations=3, center=None):
+    """Locate a star by aligning its PSF wings, ignoring the core.
+
+    Intended for coronagraphic data: behind an occulting mask the core is
+    suppressed and distorted, so peak- and centroid-based methods latch
+    onto the mask edge or a diffraction spot. The extended wings, however,
+    remain symmetric about the true star position, so this restricts the
+    image to an annulus (``r_inner`` to ``r_outer``, in pixels) and finds
+    the symmetry center of what is left.
+
+    The annulus must be concentric with the star for an unbiased answer,
+    so the center is refined iteratively from a provisional estimate
+    (``center``, else the whole-image symmetry center). Choose ``r_inner``
+    just outside the occulting spot and ``r_outer`` where the wings fade
+    into background.
+    """
+    from scipy.ndimage import gaussian_filter
+
+    img = np.nan_to_num(np.asarray(data, dtype=float))
+    if smooth_sigma:
+        img = gaussian_filter(img, smooth_sigma)
+
+    if center is None:
+        # Provisional center from the smoothed peak, not whole-image
+        # symmetry: when the source sits well away from the middle of a
+        # large cutout, the symmetry centre of the whole frame is the
+        # frame centre, and the wing annulus then never contains the star.
+        center = find_center_smooth(data)
+
+    ny, nx = img.shape
+    yy, xx = np.mgrid[:ny, :nx]
+    for _ in range(iterations):
+        rr = np.hypot(yy - center[0], xx - center[1])
+        wings = np.where((rr >= r_inner) & (rr <= r_outer), img, 0.0)
+
+        # symmetry center of the wings alone
+        dy, dx = _phase_shift(wings, wings[::-1, ::-1], upsample)
+        new_center = ((ny - 1 + dy) / 2.0, (nx - 1 + dx) / 2.0)
+
+        if np.hypot(new_center[0] - center[0],
+                    new_center[1] - center[1]) < 0.01:
+            center = new_center
+            break
+        center = new_center
+
+    return center
+
+
+def find_center_quantile_peak(data, quantile=0.9999999):
+    return argquantile(data, quantile)
+
+
+def find_center_max(data):
+    return np.unravel_index(np.nanargmax(data), data.shape)
+
+
+def find_center_min(data, search_radius=30):
+    """Darkest pixel near the core — for saturated PSFs, where the core
+    reads low. Searches within ``search_radius`` of the quantile peak."""
+    cy, cx = argquantile(data, 0.9999)
+    region = make_circle_mask(data.shape, search_radius, center=(cy, cx))
+    masked = np.where(region, data, np.nan)
+    return np.unravel_index(np.nanargmin(masked), data.shape)
+
+
+def find_center_gaussian(data, fixed_sigma=5.0, quantile=0.9999999):
+    """2D Gaussian fit seeded from the quantile peak."""
+    from utils.fitting import fit_2d_gaussian
+
+    cy, cx = argquantile(data, quantile)
+    outside = ~make_circle_mask(data.shape, 50, center=(cy, cx))
+    background = float(np.median(data[outside]))
+    params = fit_2d_gaussian(
+        data, [data[cy, cx] - background, cx, cy, background],
+        fixed_sigma=fixed_sigma)
+    return params[2], params[1]  # (cy, cx)
+
+
+_CENTER_METHODS = {
+    "smooth_peak": find_center_smooth,
+    "quantile_peak": find_center_quantile_peak,
+    "max": find_center_max,
+    "min": find_center_min,
+    "gaussian": find_center_gaussian,
+    "centroid": find_center_centroid,
+    "silhouette": find_center_silhouette,
+    "symmetry": find_center_symmetry,
+    "wings": find_center_wings,
+    "crosscorr": find_center_crosscorr,
+}
+
+
+def find_center(data, method="smooth_peak", search_center=None,
+                search_radius=None, **kwargs):
+    """Locate the star: returns ``(cy, cx)``.
+
+    ``method`` is a built-in name or any callable
+    ``f(data, **kwargs) -> (cy, cx)``.
+
+    ``search_center`` / ``search_radius`` restrict the search to a circular
+    region, which is what you need when something else in the field can
+    outshine the target: a nearby star in a crowded field, a detector
+    artefact, or the second Wollaston beam. Everything outside the circle
+    is zeroed before the finder runs.
+    """
+    finder = _CENTER_METHODS.get(method, method)
+    if not callable(finder):
+        raise ValueError(f"Unknown centering method {method!r}; options: "
+                         f"{sorted(_CENTER_METHODS)} or a callable")
+
+    if search_center is not None and search_radius is not None:
+        data = np.where(make_circle_mask(np.shape(data), search_radius,
+                                         center=search_center),
+                        np.nan_to_num(data), 0.0)
+    return finder(data, **kwargs)
+
+
+def center_frame(frame, method="smooth_peak", background_radius=50,
+                 fill=None, **kwargs):
+    """Shift a frame so the star lands on the image center.
+
+    The background level (used to fill edges revealed by the shift) is the
+    median outside a ``background_radius`` circle around the star. The
+    original star position is stored in the CX / CY header keywords
+    (0-based pixels).
+    """
+    cy, cx = find_center(frame.data, method=method, **kwargs)
+
+    if fill is None:
+        outside = ~make_circle_mask(frame.shape, background_radius,
+                                    center=(int(cy), int(cx)))
+        fill = float(np.median(frame.data[outside]))
+
+    h, w = frame.shape
+    shifted = translate(frame.data, h / 2 - cy, w / 2 - cx, fill=fill)
+
+    centered = Frame(shifted, frame.header.copy())
+    centered["CX"] = float(cx)
+    centered["CY"] = float(cy)
+
+    log.info("Frame %s: star at (%.1f, %.1f)",
+             frame.get("RED-FN", frame.get("FILENAME")), cy, cx)
+    return centered
+
+
+def center_frames(frames, **kwargs):
+    """Center every frame in a list (see :func:`center_frame`)."""
+    return [center_frame(f, **kwargs) for f in frames]
+
+
+def register_beam_stack(stack, method="smooth_peak", fill=0.0, **kwargs):
+    """Center a ``(2, ny, nx)`` beam stack on the star.
+
+    The star is located on the *mean* of the two beams and both beams are
+    shifted by that same offset, preserving their relative registration.
+    Returns ``(centered_stack, (cy, cx))``.
+    """
+    stack = np.asarray(stack, dtype=float)
+    mean_beam = np.nanmean(stack, axis=0)
+    cy, cx = find_center(mean_beam, method=method, **kwargs)
+
+    # Sanity check: a centre far from the flux-weighted position of the
+    # source usually means the finder locked onto the frame rather than the
+    # star. Warn rather than silently registering to nonsense.
+    # ``crosscorr`` deliberately returns the point matching the template
+    # centre, which in a crowded field is nowhere near the brightest
+    # source, so the check does not apply to it.
+    ref_cy, ref_cx = find_center_smooth(mean_beam)
+    if method != "crosscorr" and np.hypot(cy - ref_cy, cx - ref_cx) > 30:
+        log.warning("Centering method %r returned (%.1f, %.1f) but the "
+                    "smoothed peak is at (%.1f, %.1f) - %.0f px away; the "
+                    "registration is probably wrong", method, cy, cx,
+                    ref_cy, ref_cx, np.hypot(cy - ref_cy, cx - ref_cx))
+
+    h, w = mean_beam.shape
+    out = np.stack([translate(beam, h / 2 - cy, w / 2 - cx, fill=fill)
+                    for beam in stack], axis=0)
+    return out, (cy, cx)
+
+
+def derotate_frames(frames, north_angle_func):
+    """Derotate frames to put north up.
+
+    ``north_angle_func`` maps a frame's header to its north angle — e.g.
+    ``instruments.nirc2.calculate_north_angle``, whose first return value is
+    the mean angle. Each frame is rotated by minus that angle, matching the
+    AIR.jl call. NOTE: verify the rotation sign on real data (a field with a
+    known companion PA) — Julia and scipy image conventions differ, so the
+    derotation direction should be sanity-checked once against sky data.
+    """
+    derotated = []
+    for frame in frames:
+        angle = north_angle_func(frame)
+        if isinstance(angle, tuple):
+            angle = angle[0]
+        derotated.append(rotate_image_center(frame, -angle))
+    return derotated
+
+
+def median_combine(frames, crop_size=None, crop_center=None):
+    """Median-combine a list of frames into one image, optionally cropping
+    the result. Returns a Frame carrying the first frame's header."""
+    cube = framelist_to_cube(frames)
+    combined = np.nanmedian(cube, axis=0)
+    if crop_size is not None:
+        combined, _, _ = crop(combined, crop_size, center=crop_center)
+    return Frame(combined, frames[0].header.copy())
+
+
+def register_frames_to_template(images, template=None, upsample=20):
+    """Align a sequence of images to a common reference by cross-correlation.
+
+    ``template`` defaults to the median of the input images, which is a
+    robust reference for a repeated observation. Returns
+    ``(aligned, shifts)`` where ``shifts`` lists the applied ``(dy, dx)``.
+
+    Alignment is relative: the sequence ends up co-registered on the
+    template's frame, not on any absolute center.
+    """
+    images = [np.asarray(im, dtype=float) for im in images]
+    if template is None:
+        template = np.nanmedian(images, axis=0)
+
+    aligned, shifts = [], []
+    for im in images:
+        dy, dx = _phase_shift(template, im, upsample)
+        aligned.append(translate(im, dy, dx))
+        shifts.append((dy, dx))
+    return aligned, shifts
