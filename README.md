@@ -64,4 +64,4 @@ Some of the data presented herein were obtained at Keck Observatory, which is a 
 
 This material is based upon work supported by the National Science Foundation Astronomy \& Astrophysics Postdoctoral Fellowship Award No. 2401654. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views of the National Science Foundation. This work was also supported by the Mt. Cuba Astronomical Foundation and the University of California Observatories Mini-Grant Program.
 
-This repository was written with the help of Claude Version 1.24012.9 (o3c61d) using Fable 5 and Opus 5.
+This repository was written with the help of Claude Version 1.24012.9 (o3c61d) using Fable 5 and Opus 5. Thank you to Jayke Nguyen for writing [AIR.jl](https://github.com/jsnguyen/AIR.jl) which was adapted into Python for the basic reduction steps in the DPP (e.g. dark subtraction, flat fielding).
