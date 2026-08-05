@@ -25,5 +25,4 @@ from .imutils import (
     translate,
 )
 from .angles import angles_match, is_critical_angle
-from .fitting import fit_2d_gaussian, fit_and_translate, gaussian_2d
 from .paths import ObslogPaths, load_rejects, make_and_clear

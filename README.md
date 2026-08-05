@@ -16,11 +16,13 @@ Coming soon!
 
 ## Installation
 
-Coming soon!
+The NIRC2-Pol DPP requires Python ≥ 3.11 with `numpy`, `scipy`, `astropy`, and `pyklip`.
+
+Further instructions coming soon!
 
 ## Contributions / Questions
 
-If you wish to contribute to the NIRC2-Pol DPP, or have any questions about its use, please open an issue to start a discussion.
+If you wish to contribute to the NIRC2-Pol DPP, or have any questions about its use, please open an issue on the GitHub to start a discussion.
 
 ## Citing the NIRC2-Pol DPP
 
