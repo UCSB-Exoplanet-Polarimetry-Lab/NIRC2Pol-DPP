@@ -444,6 +444,13 @@ def register_frames_to_template(images, template=None, upsample=20):
         shifts.append((dy, dx))
     return aligned, shifts
 
+def _gaussian_2d(x, y, amplitude, x0, y0, sigma_x, sigma_y, offset):
+    """2D Gaussian model used by :func:`fit_2d_gaussian`."""
+    return amplitude * np.exp(
+        -((x - x0) ** 2 / (2 * sigma_x**2) + (y - y0) ** 2 / (2 * sigma_y**2))
+    ) + offset
+
+
 def fit_2d_gaussian(data, initial_guess, fixed_sigma=None):
     """Least-squares fit of a 2D Gaussian to an image.
 
@@ -453,6 +460,8 @@ def fit_2d_gaussian(data, initial_guess, fixed_sigma=None):
 
     Returns the fitted parameter array in the same order as the guess.
     """
+    from scipy.optimize import least_squares
+
     data = np.asarray(data, dtype=float)
     rows, cols = data.shape
     yy, xx = np.mgrid[:rows, :cols]
@@ -460,11 +469,12 @@ def fit_2d_gaussian(data, initial_guess, fixed_sigma=None):
     if fixed_sigma is not None:
         def model(p):
             amp, x0, y0, offset = p
-            return gaussian_2d(xx, yy, amp, x0, y0, fixed_sigma, fixed_sigma, offset)
+            return _gaussian_2d(xx, yy, amp, x0, y0, fixed_sigma, fixed_sigma,
+                                offset)
     else:
         def model(p):
             amp, x0, y0, sx, sy, offset = p
-            return gaussian_2d(xx, yy, amp, x0, y0, sx, sy, offset)
+            return _gaussian_2d(xx, yy, amp, x0, y0, sx, sy, offset)
 
     result = least_squares(lambda p: (data - model(p)).ravel(),
                            np.asarray(initial_guess, dtype=float))
