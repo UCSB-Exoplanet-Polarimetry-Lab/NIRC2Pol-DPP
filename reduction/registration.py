@@ -280,16 +280,55 @@ def find_center_min(data, search_radius=30):
     return np.unravel_index(np.nanargmin(masked), data.shape)
 
 
-def find_center_gaussian(data, fixed_sigma=5.0, quantile=0.9999999):
-    """2D Gaussian fit seeded from the quantile peak."""
+def find_center_gaussian(data, fixed_sigma=5.0, quantile=0.9999999,
+                         background_radius=50.0):
+    """2D Gaussian fit seeded from the quantile peak.
 
-    cy, cx = argquantile(data, quantile)
-    outside = ~make_circle_mask(data.shape, 50, center=(cy, cx))
-    background = float(np.median(data[outside]))
-    params = fit_2d_gaussian(
-        data, [data[cy, cx] - background, cx, cy, background],
-        fixed_sigma=fixed_sigma)
-    return params[2], params[1]  # (cy, cx)
+    The background is the median outside ``background_radius`` px of that
+    seed. On a cutout not much bigger than the radius that annulus can be
+    empty or tiny, so it falls back to the median of the whole frame rather
+    than letting a NaN background propagate into the fit.
+    """
+    try:
+        cy, cx = argquantile(data, quantile)
+    except ValueError as exc:
+        # argquantile cannot seed off an all-NaN frame. There is no centre to
+        # return here, so fail with a message that names the cause rather than
+        # letting "All-NaN slice encountered" surface from three frames down.
+        raise ValueError(
+            "find_center_gaussian: cannot locate a source, the frame has no "
+            f"finite pixels ({exc})") from exc
+
+    outside = ~make_circle_mask(data.shape, background_radius, center=(cy, cx))
+    if outside.sum() < 16:
+        log.warning("Background annulus outside %.0f px of (%d, %d) holds %d "
+                    "pixels on a %dx%d frame; using the whole-frame median "
+                    "instead", background_radius, cy, cx, int(outside.sum()),
+                    *data.shape)
+        outside = np.ones(data.shape, dtype=bool)
+
+    background = float(np.nanmedian(data[outside]))
+    amplitude = float(data[cy, cx]) - background
+    if not (np.isfinite(background) and np.isfinite(amplitude)):
+        log.warning("Non-finite background (%r) or amplitude (%r) for the "
+                    "Gaussian fit; using the quantile peak", background,
+                    amplitude)
+        return float(cy), float(cx)
+
+    try:
+        params = fit_2d_gaussian(
+            data, [amplitude, cx, cy, background], fixed_sigma=fixed_sigma)
+    except Exception as exc:
+        log.warning("Gaussian centering fit failed (%s); using the quantile "
+                    "peak", exc)
+        return float(cy), float(cx)
+
+    fit_cy, fit_cx = float(params[2]), float(params[1])
+    if not (0 <= fit_cy < data.shape[0] and 0 <= fit_cx < data.shape[1]):
+        log.warning("Gaussian fit left the frame at (%.1f, %.1f); using the "
+                    "quantile peak", fit_cy, fit_cx)
+        return float(cy), float(cx)
+    return fit_cy, fit_cx  # (cy, cx)
 
 
 _CENTER_METHODS = {
