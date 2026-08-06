@@ -1,0 +1,38 @@
+# Conda environment for NIRC2Pol-DPP.
+#
+#     conda env create -f environment.yml
+#     conda activate nirc2p
+#
+# These are the pipeline's own requirements rather than a dump of a working
+# environment. Majors are capped at what the pipeline has actually been run
+# against, so a fresh solve reproduces a known-good environment instead of
+# silently jumping a major version; the comment beside each records the
+# version it was exercised on. Relax the caps deliberately, not by default.
+
+name: nirc2p
+
+channels:
+  - conda-forge
+
+dependencies:
+  # tomllib (utils/paths.py) is standard library from 3.11 onward.
+  - python =3.12                  # tested on 3.12.12
+  - pip
+
+  # core reduction.
+  # astropy-base, not astropy: the astropy metapackage pulls its optional
+  # I/O backends (pyarrow, s3fs and their arrow tree), which nothing here
+  # uses and which nearly doubles the environment.
+  - numpy >=2.0,<3                # tested on 2.3.5; the 1.x -> 2.x break matters
+  - scipy >=1.11,<2               # tested on 1.16.3
+  - astropy-base >=7.0,<8         # tested on 7.2.0
+  - scikit-image >=0.22,<0.27     # tested on 0.26.0
+
+  # only needed for the docs and examples, not by the pipeline modules
+  - matplotlib-base >=3.8,<4      # tested on 3.10.8
+  - ipykernel                     # to run examples/tutorial.ipynb
+
+  # Image rotation goes through pyklip.klip.rotate -- deliberate, since it is
+  # the validated implementation -- but pyklip is not packaged on conda-forge.
+  - pip:
+      - pyklip >=2.9              # tested on 2.9
