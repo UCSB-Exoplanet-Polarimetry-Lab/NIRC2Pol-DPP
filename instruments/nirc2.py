@@ -388,8 +388,12 @@ class NIRC2PolarimetryData(PolarimetryData):
     top_row_start = 508     # top beam: rows [start, start + beam_height)
     beam_x_offset = 13      # horizontal shift of top beam relative to bottom
 
-    # HWP fast axis offset theta_off [deg] entering the rotation model;
-    # set from the fast axis calibration log (load_fast_axis_offset)
+    # HWP fast axis offset theta_off [deg] entering the rotation model.
+    # There is no trusted automatic source for this: it must be determined
+    # on sky and set explicitly. Ladder calibrations were removed because
+    # the fitted phase is theta_off + chi/2 with chi, the incident
+    # polarization angle in the instrument frame, unknown for an internal
+    # source.
     fast_axis_offset = 0.0
 
     def gain(self, header):
@@ -457,25 +461,19 @@ class NIRC2PolarimetryData(PolarimetryData):
         if fast_axis_offset is None:
             fast_axis_offset = self.fast_axis_offset
 
+        if fast_axis_offset == 0.0 and not type(self)._warned_uncalibrated_offset:
+            type(self)._warned_uncalibrated_offset = True
+            log.warning(
+                "Fast axis offset is still the uncalibrated default (0 deg), "
+                "so Q/U are not rotated into the sky frame correctly. "
+                "Determine theta_off on sky and pass it explicitly.")
+
         parang = header["PARANG"]
         if parang < 0:
             parang += 360.0
         return (-2.0 * parang + 2.0 * header["EL"]
                 + 2.0 * header[self.rotator_keyword]
                 + 4.0 * fast_axis_offset)
-
-
-#
-# fast axis calibration
-#
-# Each time the instrument team runs a fast axis calibration (HWP rotated 0
-# to 180 deg in 10 deg steps on a calibration source), the resulting offset
-# is appended to a log file; reductions pull the most recent value on or
-# before the observation date, or the user can override.
-#
-
-_DEFAULT_FAST_AXIS_LOG = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "fast_axis_log.csv")
 
 
 # Recommended background treatment per band (see PolarimetryData).
@@ -506,7 +504,7 @@ def check_background_choice(band, method):
 
 
 def band_of(header):
-    """Observing band of a frame, as used to key fast axis calibrations.
+    """Observing band of a frame.
 
     Uses FWINAME (the wavelength filter wheel), e.g. "H", "Kp", "Lp",
     "H2O_ice"; falls back to the first token of FILTER.
@@ -515,98 +513,3 @@ def band_of(header):
     if band:
         return str(band).strip()
     return str(header.get("FILTER", "")).split("+")[0].strip()
-
-
-def load_fast_axis_offset(date_obs, band=None, log_file=_DEFAULT_FAST_AXIS_LOG,
-                          strict_band=True):
-    """Most recent fast axis offset [deg] on or before ``date_obs``, for the
-    matching ``band``, from the calibration log.
-
-    The offset depends on the observing band, so a calibration is only
-    valid for data taken in the same filter: pass the band (see
-    :func:`band_of`) and the log is filtered to it. With
-    ``strict_band=False`` the search falls back to any band when no
-    matching calibration exists, which is a guess — the returned value is
-    then flagged in the log message.
-
-    CSV columns: date, band, theta_off_deg, notes.
-    """
-    import csv
-
-    obs = _parse_date(date_obs)
-    entries = []
-    with open(log_file) as f:
-        # allow '#' comment lines anywhere, including above the header row
-        lines = [ln for ln in f if not ln.lstrip().startswith("#")]
-    for row in csv.DictReader(lines):
-        if row.get("date"):
-            entries.append((_parse_date(row["date"]),
-                            str(row.get("band", "")).strip(),
-                            float(row["theta_off_deg"])))
-
-    usable = [e for e in sorted(entries) if e[0] <= obs]
-    if band is not None:
-        matching = [e for e in usable if e[1].lower() == str(band).lower()]
-    else:
-        matching = usable
-
-    if not matching:
-        if band is not None and not strict_band and usable:
-            cal_date, cal_band, theta_off = usable[-1]
-            log.warning("No %s fast axis calibration on or before %s; falling "
-                        "back to the %s calibration from %s (%.4f deg) -- "
-                        "the offset is band dependent, so treat this as "
-                        "provisional", band, date_obs, cal_band, cal_date,
-                        theta_off)
-            return theta_off
-        raise ValueError(
-            f"No fast axis calibration for band {band!r} on or before "
-            f"{date_obs} in {log_file}")
-
-    cal_date, cal_band, theta_off = matching[-1]
-    log.info("Using %s-band fast axis offset %.4f deg from the %s calibration",
-             cal_band, theta_off, cal_date)
-    return theta_off
-
-
-def record_fast_axis_offset(date, band, theta_off, notes="",
-                            log_file=_DEFAULT_FAST_AXIS_LOG):
-    """Append a fast axis calibration result to the log file."""
-    import csv
-
-    new_file = not os.path.isfile(log_file)
-    with open(log_file, "a", newline="") as f:
-        writer = csv.writer(f)
-        if new_file:
-            writer.writerow(["date", "band", "theta_off_deg", "notes"])
-        writer.writerow([str(date), str(band), f"{theta_off:.4f}", notes])
-
-
-def fit_fast_axis_sequence(hwp_angles, fluxes):
-    """Fit a fast axis calibration sequence: single-difference flux of a
-    polarized calibration source vs. HWP angle (0 to 180 deg in 10 deg
-    steps).
-
-    The modulation follows ``A * cos(4 * (theta - theta_off)) + C``; the
-    fitted phase gives the fast axis offset theta_off [deg], wrapped into
-    (-22.5, 22.5] (the model is degenerate modulo 45 deg).
-    """
-    from scipy.optimize import curve_fit
-
-    hwp_angles = np.asarray(hwp_angles, dtype=float)
-    fluxes = np.asarray(fluxes, dtype=float)
-
-    def model(theta, amp, theta_off, const):
-        return amp * np.cos(np.radians(4.0 * (theta - theta_off))) + const
-
-    amp0 = (np.nanmax(fluxes) - np.nanmin(fluxes)) / 2.0
-    p0 = [amp0, 0.0, float(np.nanmean(fluxes))]
-    params, _ = curve_fit(model, hwp_angles, fluxes, p0=p0)
-
-    amp, theta_off, _ = params
-    if amp < 0:  # fold negative amplitude into the phase
-        theta_off += 22.5
-    theta_off = (theta_off + 22.5) % 45.0 - 22.5
-
-    log.info("Fast axis sequence fit: theta_off = %.4f deg", theta_off)
-    return float(theta_off)

@@ -260,16 +260,16 @@ print("cycle 0 HWP angles:",
    + 4·θ_off`, then `Q′ = Q cosθ + U sinθ`, `U′ = −Q sinθ + U cosθ`
 5. **derotation** to north-up east-left (pyklip rotation)
 
-The **fast axis offset θ_off** comes from `instruments/fast_axis_log.csv`,
-keyed by **(date, band)**. The value has changed between epochs, so the
-lookup returns the most recent calibration on or before your observation
-*in the same band*, and raises rather than quietly substituting another
-band. Never fit it from science data.
+The **fast axis offset θ_off** has to be determined **on sky** and passed
+in explicitly. There is no calibration log to read it from: fitting an HWP
+ladder on an internal source returns θ_off + χ/2, where χ is the incident
+polarization angle in the instrument frame, and χ is not known for a dome or
+lamp source. Leaving θ_off at its 0 deg default does not rotate Q/U into the
+sky frame correctly, and the pipeline warns once if you do.
 
 ```python
-band = nirc2.band_of(frame.header)
-theta_off = nirc2.load_fast_axis_offset(frame["DATE-OBS"], band=band)
-print(f"{band}-band fast axis offset for {frame['DATE-OBS']}: {theta_off} deg")
+THETA_OFF = 0.0   # [deg] -- REPLACE with a value measured on sky
+theta_off = THETA_OFF
 
 stokes_cubes = build_stokes_cubes(instrument, cycles,
                                   fast_axis_offset=theta_off)
@@ -415,8 +415,8 @@ parameter.
 - Q_phi = +Q cos2φ + U sin2φ (Eq. 6): tangential disk signal is positive.
 - `rotate_image_center(img, a)` rotates clockwise in `origin="lower"`
   display (pyklip backend, sign-matched); derotation uses `−north_angle`.
-- θ_off lives in `instruments/fast_axis_log.csv`, keyed by date; the most
-  recent calibration on or before your DATE-OBS is used automatically.
+- θ_off must be measured on sky and passed explicitly; there is no trusted
+  automatic source, and the 0 deg default is not a calibration.
 
 **Gotchas**
 - *Saturated PSF cores*: at L' the core often reads low (a "donut") —
@@ -475,8 +475,6 @@ parameter.
 | HWP cycles | `instrument.match_modulator_cycles(frames)` |
 | Stokes cubes | `polarimetry.build_stokes_cubes` |
 | combine + products | `polarimetry.median_stokes_cube / polarization_products / radial_stokes` |
-| fast axis offset | `instruments.nirc2.load_fast_axis_offset(date, band=...)` |
-| fast axis from cal sequence | `instruments.nirc2.fit_fast_axis_sequence` |
 | temporary IP correction | `polarimetry.fit_empirical_cycle_correction` (TEMPORARY) |
 | write products | `polarimetry.ProductWriter(output_dir, target=...)` |
 | read provenance | `utils.provenance.describe(frame)` |

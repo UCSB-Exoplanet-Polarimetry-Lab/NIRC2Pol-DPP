@@ -9,7 +9,7 @@ each step is easy to run and inspect on its own (e.g. in a notebook):
     4. sky / dither subtraction
     5. HWP cycle matching
     6. beam splitting + image registration
-    7. fast axis value from the calibration log
+    7. fast axis offset (determined on sky; see THETA_OFF below)
     8. Stokes cubes per cycle, median Stokes cube, PI/AoLP/DoLP,
        radial Stokes
 
@@ -109,8 +109,13 @@ cycles = instrument.match_modulator_cycles(reduced_frames)
 #        instrument.split_beams; center the frames first so the beams land
 #        on the star (see reduction.register_beam_stack for finer control)
 
-# --- 7. fast axis value from the calibration log --------------------------
-theta_off = nirc2.load_fast_axis_offset(DATE)
+# --- 7. fast axis offset ---------------------------------------------------
+# There is no trusted automatic source for theta_off. Ladder calibrations
+# were removed because the fitted phase is theta_off + chi/2, with chi (the
+# incident polarization angle in the instrument frame) unknown for an
+# internal source. Determine it on sky and set it here.
+THETA_OFF = 0.0   # [deg] -- REPLACE with a value measured on sky
+theta_off = THETA_OFF
 instrument.fast_axis_offset = theta_off
 
 # --- 8. Stokes cubes and derived products ---------------------------------

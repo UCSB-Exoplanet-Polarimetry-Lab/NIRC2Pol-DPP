@@ -58,6 +58,7 @@ class PolarimetryData(ABC):
     background_annulus = None             # (r_inner, r_outer) in pixels
 
     _warned_no_background = False
+    _warned_uncalibrated_offset = False
 
     def subtract_background(self, stack):
         """Remove the sky/thermal pedestal from each beam of a stack."""
