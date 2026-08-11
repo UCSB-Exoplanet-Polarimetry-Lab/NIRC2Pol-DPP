@@ -23,8 +23,21 @@ _STEP_PREFIX = "DPP "
 
 
 def pipeline_version():
-    """Version string for the running pipeline: the git commit of this
-    repository if available, else "unknown"."""
+    """Version string for the running pipeline.
+
+    Returns
+    -------
+    str
+        The short git commit of this repository, suffixed ``+local`` when
+        the working tree is dirty, or ``"unknown"`` when git is unavailable
+        (an installed copy, or no repository). Cached after the first call.
+
+    Notes
+    -----
+    Stamped into every product as ``DPPVER``, so a reduction can be traced
+    to the code that made it. ``+local`` is a warning that the commit alone
+    does not identify what ran.
+    """
     global _VERSION_CACHE
     if _VERSION_CACHE is not None:
         return _VERSION_CACHE
@@ -45,6 +58,20 @@ def pipeline_version():
 
 
 def _format_value(value):
+    """Render one provenance parameter compactly for a HISTORY card.
+
+    Parameters
+    ----------
+    value : object
+        Value to render. Floats use ``%.6g`` (so ``8.0`` becomes ``8``),
+        lists and tuples are bracketed and space-separated, everything else
+        falls back to ``str``.
+
+    Returns
+    -------
+    str
+        The rendered value.
+    """
     if isinstance(value, float):
         return f"{value:.6g}"
     if isinstance(value, (list, tuple)):
@@ -55,10 +82,31 @@ def _format_value(value):
 def record_step(target, step, **params):
     """Record one processing step in a header.
 
-    ``target`` may be a ``Frame`` or an ``astropy.io.fits.Header``. ``step``
-    names the stage ("dark/flat", "double-difference", ...) and ``params``
-    are the settings worth reproducing. Long lines are wrapped across
-    several HISTORY cards so nothing is silently truncated.
+    Parameters
+    ----------
+    target : Frame or astropy.io.fits.Header
+        Where to write. A ``Frame``'s header is used.
+    step : str
+        Name of the stage, e.g. ``"dark/flat reduction"`` or
+        ``"stokes cube"``.
+    **params
+        Settings worth reproducing, rendered by :func:`_format_value`.
+
+    Returns
+    -------
+    astropy.io.fits.Header
+        The header that was written to.
+
+    Notes
+    -----
+    Appends a HISTORY card of the form::
+
+        DPP <step>: key=value, key=value   [2026-07-29T04:12:33]
+
+    and stamps ``DPPVER`` and ``DPPDATE`` once, on first use. Lines longer
+    than a HISTORY card's payload are wrapped across several cards rather
+    than silently truncated, so a long parameter list survives the round
+    trip to disk.
     """
     header = getattr(target, "header", target)
 
@@ -80,14 +128,38 @@ def record_step(target, step, **params):
 
 
 def steps_of(target):
-    """List the pipeline steps recorded in a header, in order."""
+    """Read the recorded pipeline steps back out of a product.
+
+    Parameters
+    ----------
+    target : Frame or astropy.io.fits.Header
+        Product to inspect.
+
+    Returns
+    -------
+    list of str
+        The ``DPP``-prefixed HISTORY lines, in the order they were written.
+        Other HISTORY cards, such as those astropy adds itself, are ignored.
+    """
     header = getattr(target, "header", target)
     return [str(h) for h in header.get("HISTORY", [])
             if str(h).startswith(_STEP_PREFIX)]
 
 
 def describe(target):
-    """Human-readable provenance summary of a product."""
+    """Format a product's full provenance for reading.
+
+    Parameters
+    ----------
+    target : Frame or astropy.io.fits.Header
+        Product to describe.
+
+    Returns
+    -------
+    str
+        A multi-line summary: the pipeline version and processing date,
+        then one indented line per recorded step.
+    """
     header = getattr(target, "header", target)
     lines = [f"NIRC2Pol-DPP {header.get('DPPVER', 'unknown')} "
              f"processed {header.get('DPPDATE', 'unknown')}"]

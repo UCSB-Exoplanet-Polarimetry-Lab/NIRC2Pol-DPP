@@ -23,6 +23,32 @@ from dataclasses import dataclass, field
 
 @dataclass
 class ObslogPaths:
+    """Standard folder layout for one night of observations.
+
+    Mirrors AIR.jl's ``ObslogPaths``. Constructed from the root
+    observations folder and a date; every other path is derived, so a
+    reduction script names the night once.
+
+    Parameters
+    ----------
+    observations_folder : str
+        Root folder holding one subfolder per night.
+    date : str
+        Night identifier, used as the subfolder name (e.g. ``"2026-06-05"``).
+
+    Attributes
+    ----------
+    data_folder : str
+        ``observations_folder/date``.
+    raw_folder, reduced_folder, sequences_folder, plots_folder : str
+        The per-night subfolders.
+    darks_file, flats_file, skies_file, master_mask_file : str
+        Multi-extension master files, as written by
+        :func:`utils.frame.save_frames`.
+    rejects_file : str
+        TOML list of frames to exclude; see :func:`load_rejects`.
+    """
+
     observations_folder: str
     date: str
 
@@ -41,6 +67,7 @@ class ObslogPaths:
     masks_file: str = field(init=False)
 
     def __post_init__(self):
+        """Derive every path from ``observations_folder`` and ``date``."""
         self.data_folder = os.path.join(self.observations_folder, self.date)
 
         self.raw_folder = os.path.join(self.data_folder, "raw")
@@ -58,6 +85,7 @@ class ObslogPaths:
         self.masks_file = os.path.join(self.data_folder, "master_mask.fits")
 
     def make_folders(self):
+        """Create the night's subfolders, leaving any that already exist."""
         for folder in (self.raw_folder, self.reduced_folder,
                        self.plots_folder, self.sequences_folder):
             os.makedirs(folder, exist_ok=True)
@@ -119,6 +147,7 @@ def record_reject(rejects_file, filename, reason=""):
     rejects[str(os.path.basename(str(filename)))] = str(reason)
 
     def _quote(text):
+        """TOML-quote a string, escaping backslashes and double quotes."""
         return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
 
     lines = ["# Frames excluded from reductions, with why.",
