@@ -74,11 +74,58 @@ def make_and_clear(folder_path, glob_pattern):
 
 
 def load_rejects(rejects_file):
-    """Load the list of rejected frame filenames from a TOML file with a
-    top-level ``rejects`` list. Returns [] if the file doesn't exist."""
+    """Load rejected frames from a TOML file, as ``{filename: reason}``.
+
+    Two forms are accepted. A plain list, which is what earlier reductions
+    used and which loses the reason::
+
+        rejects = ["n0123.fits", "n0456.fits"]
+
+    or a table, which keeps it::
+
+        [rejects]
+        "n0123.fits" = "open AO loop"
+        "n0456.fits" = "satellite trail"
+
+    Returns a dict either way (empty reasons for the list form), and ``{}``
+    when the file does not exist. Callers testing membership are unaffected,
+    since ``in`` on a dict checks its keys -- which is how
+    :func:`utils.frame.load_frames` uses it.
+    """
     import tomllib
 
     if not os.path.isfile(rejects_file):
-        return []
+        return {}
     with open(rejects_file, "rb") as f:
-        return tomllib.load(f)["rejects"]
+        entry = tomllib.load(f).get("rejects", [])
+
+    if isinstance(entry, dict):
+        return {str(k): str(v) for k, v in entry.items()}
+    return {str(name): "" for name in entry}
+
+
+def record_reject(rejects_file, filename, reason=""):
+    """Add or update a rejected frame, preserving the existing entries.
+
+    Rewrites the file in the table form, so a file that started as a plain
+    list is upgraded in place and keeps the reasons added from then on.
+    Returns the full mapping as written.
+
+    ``tomllib`` is read-only, so the table is written directly rather than
+    taking a dependency on a TOML writer; the structure is two levels deep
+    and the only escaping needed is for quotes and backslashes.
+    """
+    rejects = load_rejects(rejects_file)
+    rejects[str(os.path.basename(str(filename)))] = str(reason)
+
+    def _quote(text):
+        return '"' + str(text).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+    lines = ["# Frames excluded from reductions, with why.",
+             "# Read by utils.paths.load_rejects; written by record_reject.",
+             "", "[rejects]"]
+    lines += [f"{_quote(name)} = {_quote(rejects[name])}"
+              for name in sorted(rejects)]
+    with open(rejects_file, "w") as f:
+        f.write("\n".join(lines) + "\n")
+    return rejects

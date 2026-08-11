@@ -25,4 +25,5 @@ from .imutils import (
     translate,
 )
 from .angles import angles_match, is_critical_angle
-from .paths import ObslogPaths, load_rejects, make_and_clear
+from .paths import (ObslogPaths, load_rejects, make_and_clear,
+                    record_reject)

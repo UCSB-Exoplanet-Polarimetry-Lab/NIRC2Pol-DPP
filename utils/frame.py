@@ -114,7 +114,11 @@ def scrub_header(header):
 
 def load_frames(frame_paths, rejects=()):
     """Load a list of FITS files into Frames, skipping any whose basename is
-    in ``rejects``."""
+    in ``rejects``.
+
+    ``rejects`` is any container supporting ``in`` -- a list of filenames, or
+    the ``{filename: reason}`` mapping from :func:`utils.paths.load_rejects`.
+    """
     frames = []
     for fn in frame_paths:
         if os.path.basename(str(fn)) in rejects:
