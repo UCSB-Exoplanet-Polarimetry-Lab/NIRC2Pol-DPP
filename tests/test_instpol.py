@@ -89,12 +89,18 @@ def test_measure_ip_cycle_without_radius_raises():
 
 
 def test_normalized_single_difference_sign_flips_with_hwp(instrument, truth):
-    """One exposure carries one modulated combination of Q and U.
+    """Pins the beam-order and sign conventions.
 
-    At HWP 0 the single difference is +Q, so its normalized value in an
-    unpolarized annulus is +ipq; at 45 deg the difference is -Q, hence
-    -ipq. That sign flip is exactly why a single exposure cannot give an
-    ipq/ipu pair, and why this returns a bare float.
+    The load-bearing assertion is the *absolute* sign of ``r0``: it fixes
+    the chain ``split_beams`` returns ``[bottom, top]`` -> ``single_difference``
+    computes ``top - bottom`` -> an ipq leakage reads positive. Mutation
+    testing says only two tests in the suite notice if that inverts, and a
+    silent inversion would flip every polarization angle downstream.
+
+    The relative flip between HWP 0 and 45 is weaker evidence: the fixture
+    builds the frames as ``(q_i, -q_i, u_i, -u_i)``, so it is injected by
+    construction rather than derived. It is asserted because it is cheap and
+    documents the modulation, not because it proves anything about the code.
     """
     from utils.imutils import make_annulus_mask
 
@@ -184,3 +190,35 @@ def test_ip_magnitude_and_angle():
     assert ip.angle == pytest.approx(0.0)
     ip = InstrumentalPolarization(0.0, 0.01, method="manual")
     assert ip.angle == pytest.approx(45.0)
+
+
+def test_flux_weighting_beats_per_pixel_ratio(instrument, truth):
+    """The estimator is sum(d)/sum(s), not the mean of d/s per pixel.
+
+    Both are unbiased on noiseless data, so the choice only shows up once
+    there is noise: a per-pixel ratio weights every pixel equally, including
+    the faint ones where the denominator is small and the ratio is wild,
+    while the ratio of sums weights by flux. Over an annulus spanning a
+    factor of ~5 in intensity the difference is large.
+
+    Without this test the estimator can be swapped for the one the docstring
+    warns against and the rest of the suite still passes.
+    """
+    from utils.imutils import make_annulus_mask
+
+    mask = make_annulus_mask((NY, NX), 4.0, 40.0)
+    weighted_err, per_pixel_err = [], []
+    for seed in range(12):
+        cycle = synth_cycle(theta_off=0.0, ipq=truth["ipq"], ipu=0.0,
+                            parang=0.0, el=0.0, rot=0.0,
+                            seed=seed, noise=3.0)
+        stack = instrument.split_beams(cycle[0])
+        d, s = stack[1] - stack[0], stack[1] + stack[0]
+        weighted = np.nansum(d[mask]) / np.nansum(s[mask])
+        per_pixel = np.nanmean(d[mask] / s[mask])
+        weighted_err.append(abs(weighted - truth["ipq"]))
+        per_pixel_err.append(abs(per_pixel - truth["ipq"]))
+
+    assert normalized_single_difference(
+        instrument.split_beams(cycle[0]), mask) == pytest.approx(weighted)
+    assert np.mean(weighted_err) < np.mean(per_pixel_err)
