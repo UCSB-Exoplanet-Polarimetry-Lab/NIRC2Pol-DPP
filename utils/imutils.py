@@ -136,7 +136,13 @@ def make_sigma_clip_mask(data, n_sigma=9.0):
 def plus_mask(mask, radius=1):
     """Grow a boolean mask into a "+" shape: each True pixel spreads
     ``radius`` steps up/down/left/right. Used for saturated pixels, which
-    bleed along detector rows/columns."""
+    bleed along detector rows/columns.
+
+    ``radius`` must be >= 1. It is passed straight to
+    ``ndimage.binary_dilation`` as ``iterations``, where 0 does not mean "no
+    dilation" but "repeat until nothing changes" -- which fills the whole
+    frame.
+    """
     cross = ndimage.generate_binary_structure(2, 1)  # 4-connected "+" kernel
     return ndimage.binary_dilation(mask, structure=cross, iterations=radius)
 

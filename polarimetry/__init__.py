@@ -39,4 +39,3 @@ from .fast_axis import (
     scan_fast_axis_offset,
     wrap_offset,
 )
-from .sequences import generate_sequence_epoch, sequence_dict, split_horizontal
