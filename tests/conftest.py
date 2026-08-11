@@ -52,7 +52,7 @@ class SyntheticPolarimetryData(PolarimetryData):
 
     def sort_frames(self, filenames, **kwargs):
         return {"sci": list(filenames), "darks": [], "flats": [],
-                "flats_sky": [], "flats_lampon": [], "flats_lampoff": []}
+                "flats_sky": [], "flats_lampon": []}
 
     def north_angle(self, header):
         return float(header.get("NORTH", 0.0))

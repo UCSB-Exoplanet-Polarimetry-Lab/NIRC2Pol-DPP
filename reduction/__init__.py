@@ -11,7 +11,7 @@ from .masters import (
     make_master_skies,
     make_masters,
     flat_sort_key,
-    preferred_flat_type_for,
+    required_flat_type_for,
     split_polarimetric_flats,
 )
 from .calibrate import (

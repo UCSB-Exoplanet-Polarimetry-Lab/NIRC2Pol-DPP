@@ -36,10 +36,11 @@ def find_matching_master(frame, masters, keylist):
 
 
 def find_closest_flat(frame, master_flats, ranked_keylists=None,
-                      exceptions=None):
+                      exceptions=None, required_flat_type=None,
+                      allow_flat_type_mismatch=False):
     """Find the best-matching flat.
 
-    The filter must always match — a flat in another filter describes the
+    Two things are mandatory. The filter must always match — a flat in another filter describes the
     wrong throughput pattern — but exposure settings are irrelevant, since
     the flat is normalized. Detector size is only a preference: a flat
     covering a *larger* region is trimmed to the frame, so a full-frame
@@ -49,10 +50,19 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     flats keep the preference order set by ``make_master_flats``
     (polarimetric first, then the band-appropriate lamp/sky type).
 
+    The flat *type* must also match what the band requires: sky flats at
+    L'/M, where the dome lamp is swamped by thermal background, and lamp
+    flats in JHK. Reducing with the wrong kind produces a wrong answer that
+    still looks reasonable, so a mismatch raises ``ValueError`` rather than
+    substituting. ``required_flat_type`` overrides the band default and
+    ``allow_flat_type_mismatch=True`` downgrades the error to a warning for
+    anyone who genuinely wants it.
+
     ``exceptions`` maps a filter substring to a tuple of acceptable
     substitute filter names, for filters that have no flats of their own
     (e.g. NIRC2 narrowband — see ``instruments.nirc2.FLAT_EXCEPTIONS``).
     """
+    from .masters import required_flat_type_for
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
                        else defaults.RANKED_FLATS_KEYLISTS)
     exceptions = exceptions or {}
@@ -79,6 +89,24 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
         log.warning("No matching flat found for %s, %s",
                     frame.get("FILENAME"), frame.get("FILTER"))
         return None, None
+
+    band = str(frame.get("FWINAME")
+               or str(frame.get("FILTER", "")).split("+")[0].strip())
+    wanted = required_flat_type_for(band, required_flat_type)
+    got = str(matched_flat.get("FLATTYPE", "")).split("+")[0] or "UNKNOWN"
+    if got != wanted:
+        available = sorted({str(f.get("FLATTYPE", "UNKNOWN")).split("+")[0]
+                            for f in master_flats})
+        message = (f"{band}-band data requires a {wanted} flat but the best "
+                   f"match is {got}; available types: {available}. Reducing "
+                   f"with the wrong kind of flat gives a wrong answer that "
+                   f"still looks plausible.")
+        if not allow_flat_type_mismatch:
+            raise ValueError(message)
+        log.warning("%s Proceeding because allow_flat_type_mismatch=True.",
+                    message)
+        matched_flat = Frame(matched_flat.data, matched_flat.header.copy())
+        matched_flat["FLATMISM"] = (True, "flat type does not match the band")
 
     if matched_flat.shape != frame.shape:
         if image_is_larger(matched_flat.data, frame.data):
@@ -185,6 +213,7 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None):
 
 def reduce_frame(frame, master_flats, master_darks, master_skies=None,
                  masks=None, bad_pixel_mask=None, flat_exceptions=None,
+                 required_flat_type=None, allow_flat_type_mismatch=False,
                  bad_pixel_mask_size=9, bad_pixel_plus_mask_size=11,
                  gain=1.0, saturation_limit=1e12, skip_sky_sub=True,
                  div_coadds=True, div_itime=False,
@@ -219,8 +248,10 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
     reduced = frame.copy()
     masks = masks or {}
 
-    _, matched_flat = find_closest_flat(reduced, master_flats,
-                                        exceptions=flat_exceptions)
+    _, matched_flat = find_closest_flat(
+        reduced, master_flats, exceptions=flat_exceptions,
+        required_flat_type=required_flat_type,
+        allow_flat_type_mismatch=allow_flat_type_mismatch)
     _, matched_dark = find_closest_dark(reduced, master_darks)
 
     if matched_dark is None:

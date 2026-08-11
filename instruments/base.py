@@ -132,8 +132,7 @@ class PolarimetryData(ABC):
     @abstractmethod
     def sort_frames(self, filenames, **kwargs):
         """Classify raw files into a dict of filename lists with keys
-        "sci", "flats", "flats_sky", "flats_lampon", "flats_lampoff",
-        "darks"."""
+        "sci", "flats", "flats_sky", "flats_lampon", "darks"."""
 
     @abstractmethod
     def north_angle(self, header):

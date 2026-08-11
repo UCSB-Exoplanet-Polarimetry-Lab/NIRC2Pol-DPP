@@ -146,7 +146,6 @@ master_flats, flat_masks = make_master_flats(
     load_frames(sorted_files["flats"]),
     load_frames(sorted_files["flats_sky"]),
     load_frames(sorted_files["flats_lampon"]),
-    load_frames(sorted_files["flats_lampoff"]),
     master_darks,
     bad_pixel_mask=bad_pixel_mask,
     # tell it how to spot a polarimetric (critical-angle) flat set so those

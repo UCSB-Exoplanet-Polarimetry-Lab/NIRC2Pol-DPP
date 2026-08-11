@@ -47,7 +47,7 @@ def _reduce_night(night):
     master_darks, dark_masks = make_master_darks(
         load_frames(sorted_files["darks"]), bad_pixel_mask=inst.bad_pixel_mask())
     master_flats, flat_masks = make_master_flats(
-        load_frames(sorted_files["flats"]), [], [], [], master_darks,
+        [], [], load_frames(sorted_files["flats_lampon"]), master_darks,
         bad_pixel_mask=inst.bad_pixel_mask(),
         modulator_keyword=inst.modulator_keyword,
         critical_angles=inst.critical_angles)
@@ -67,7 +67,11 @@ def test_sort_frames_classifies_the_night(synthetic_night):
     sorted_files = inst.sort_frames(files)
 
     assert len(sorted_files["darks"]) == 5
-    assert len(sorted_files["flats"]) == 12          # lamp-on, no lamp-off pairs
+    # lamp-on flats stay lamp-on; they are no longer swept into the generic
+    # "flats" bucket, which used to tag them REGULAR and make the band's
+    # required flat type match nothing
+    assert len(sorted_files["flats_lampon"]) == 12
+    assert sorted_files["flats"] == []
     assert len(sorted_files["sci"]) == 4 * synthetic_night["truth"]["n_cycles"]
 
 
@@ -228,7 +232,7 @@ def test_orchestrator_matches_the_function_chain(synthetic_night):
         darks, dmask = make_master_darks(
             load_frames(ctx["sort"]["darks"]), bad_pixel_mask=bpm)
         flats, fmask = make_master_flats(
-            load_frames(ctx["sort"]["flats"]), [], [], [], darks,
+            [], [], load_frames(ctx["sort"]["flats_lampon"]), darks,
             bad_pixel_mask=bpm,
             modulator_keyword=ctx["instrument"].modulator_keyword,
             critical_angles=ctx["instrument"].critical_angles)

@@ -143,17 +143,17 @@ def _at_flat_position(frame, arcsec_threshold):
             and shutter_open)
 
 
-def is_lampon_frame(frame, arcsec_threshold=100.0, lampoff_threshold=100.0):
+def is_lampon_frame(frame, arcsec_threshold=100.0, min_flat_counts=100.0):
     """Dome flat with the lamp on: telescope at the flat position, AO loops
-    open, shutter open, and counts above ``lampoff_threshold``."""
-    return (_at_flat_position(frame, arcsec_threshold)
-            and np.median(frame.data) > lampoff_threshold)
+    open, shutter open, and counts above ``min_flat_counts``.
 
-
-def is_lampoff_frame(frame, arcsec_threshold=100.0, lampoff_threshold=100.0):
-    """Dome flat with the lamp off: same as lamp-on but with low counts."""
+    Lamp-*off* frames are not classified at all. They carry no useful
+    information -- in JHK they are meaningless, and at L' the dome lamp is
+    swamped by thermal background so sky flats are used regardless -- and
+    the count threshold now only separates an illuminated flat from a dud.
+    """
     return (_at_flat_position(frame, arcsec_threshold)
-            and np.median(frame.data) <= lampoff_threshold)
+            and np.median(frame.data) > min_flat_counts)
 
 
 def is_sky_twilight_frame(frame):
@@ -167,14 +167,18 @@ def is_dark_frame(frame):
     return str(frame["SHRNAME"]).lower() == "closed"
 
 
-def sort_frames(filenames, lampoff_threshold=100.0, arcsec_threshold=100.0):
+def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
     """Classify raw NIRC2 FITS files by type using their headers.
 
     Returns a dict of filename lists with keys ``"sci"``, ``"flats"``,
-    ``"flats_sky"``, ``"flats_lampon"``, ``"flats_lampoff"``, ``"darks"``.
-    If no lamp-off flats are found, lamp-on flats are treated as regular
-    flats (matching AIR.jl). Frames missing required header keywords are
-    dropped with a warning.
+    ``"flats_sky"``, ``"flats_lampon"``, ``"darks"``. Frames missing
+    required header keywords are dropped with a warning.
+
+    Lamp-on flats stay in ``flats_lampon`` and become LAMP-type masters.
+    They used to be moved into the generic ``flats`` bucket whenever no
+    lamp-off frames existed, which is always -- and since that bucket is
+    tagged REGULAR, the band's required flat type then matched nothing and
+    the requirement was silently inert.
     """
     from utils.frame import Frame
 
@@ -190,24 +194,17 @@ def sort_frames(filenames, lampoff_threshold=100.0, arcsec_threshold=100.0):
         kept_filenames.append(fn)
 
     sorted_files = {"sci": [], "flats": [], "flats_sky": [],
-                    "flats_lampon": [], "flats_lampoff": [], "darks": []}
+                    "flats_lampon": [], "darks": []}
 
     for fn, frame in zip(kept_filenames, frames):
-        if is_lampon_frame(frame, arcsec_threshold, lampoff_threshold):
+        if is_lampon_frame(frame, arcsec_threshold, min_flat_counts):
             sorted_files["flats_lampon"].append(fn)
-        elif is_lampoff_frame(frame, arcsec_threshold, lampoff_threshold):
-            sorted_files["flats_lampoff"].append(fn)
         elif is_sky_twilight_frame(frame):
             sorted_files["flats_sky"].append(fn)
         elif is_dark_frame(frame):
             sorted_files["darks"].append(fn)
         else:
             sorted_files["sci"].append(fn)
-
-    if not sorted_files["flats_lampoff"]:
-        log.info("No lamp-off flats found, assuming regular flats...")
-        sorted_files["flats"] = sorted_files["flats_lampon"]
-        sorted_files["flats_lampon"] = []
 
     for kind, files in sorted_files.items():
         log.info("Found %d %s frames", len(files), kind)

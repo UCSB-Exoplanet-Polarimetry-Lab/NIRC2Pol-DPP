@@ -13,7 +13,7 @@ Typical use::
 
     master_darks, dark_masks = make_master_darks(dark_frames, bad_pixel_mask=bpm)
     master_flats, flat_masks = make_master_flats(
-        flat_frames, sky_frames, lampon_frames, lampoff_frames,
+        flat_frames, sky_frames, lampon_frames,
         master_darks, bad_pixel_mask=bpm)
     master_masks = make_master_masks(dark_masks, flat_masks)
 """
@@ -198,10 +198,15 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
     return list(master_skies.values()), list(masks.values())
 
 
-def make_lamp_flats(lampon_frames, lampoff_frames, master_darks, keylist=None,
+def make_lamp_flats(lampon_frames, master_darks, keylist=None,
                     bad_pixel_mask=None, min_frames=3, **kwargs):
-    """Build lamp flats: lamp-on minus lamp-off (or minus a master dark when
-    no lamp-off exists), normalized by the median."""
+    """Build lamp flats: lamp-on minus the matched master dark, normalized
+    by the median.
+
+    Lamp-off frames are not used. They are meaningless in JHK, and at L' the
+    dome lamp is swamped by thermal background so sky flats are used
+    instead, which leaves the dark as the thing to subtract.
+    """
     keylist = keylist if keylist is not None else defaults.FLATS_KEYLIST
 
     def _make(frames, label):
@@ -212,28 +217,20 @@ def make_lamp_flats(lampon_frames, lampoff_frames, master_darks, keylist=None,
                             min_frames=min_frames, **kwargs)
 
     master_lampon, lampon_masks = _make(lampon_frames, "lamp-on")
-    master_lampoff, lampoff_masks = _make(lampoff_frames, "lamp-off")
 
     master_flat_lamp = {}
     master_flat_lamp_masks = {}
-    for key, lampon in master_lampon.items():
-        flat = lampon
-        sub_frame = np.zeros(flat.shape)
-
-        if key in master_lampoff:
-            sub_frame = master_lampoff[key].data
-            flat["FLATTYPE"] = "LAMP"
-            master_flat_lamp_masks[key] = lampon_masks[key] | lampoff_masks[key]
+    for key, flat in master_lampon.items():
+        _, matched_dark = find_closest_dark(flat, master_darks)
+        if matched_dark is None:
+            log.warning("No matching dark for lamp flat %s; it will rank "
+                        "below dark-subtracted flats", key)
+            sub_frame = np.zeros(flat.shape)
+            flat["FLATTYPE"] = "LAMP+NODARK"
         else:
-            _, matched_dark = find_closest_dark(lampon, master_darks)
-            if matched_dark is None:
-                log.warning("No matching dark found for lamp-on flat %s", key)
-                flat["FLATTYPE"] = "LAMP+NODARK"
-            else:
-                log.warning("Using dark frame to subtract from lamp-on flat %s", key)
-                sub_frame = matched_dark.data
-                flat["FLATTYPE"] = "LAMP+DARK"
-            master_flat_lamp_masks[key] = lampon_masks[key]
+            sub_frame = matched_dark.data
+            flat["FLATTYPE"] = "LAMP"
+        master_flat_lamp_masks[key] = lampon_masks[key]
 
         flat.data -= sub_frame
         flat.data /= np.median(flat.data)
@@ -242,23 +239,28 @@ def make_lamp_flats(lampon_frames, lampoff_frames, master_darks, keylist=None,
     return master_flat_lamp, master_flat_lamp_masks
 
 
-def preferred_flat_type_for(band, override=None):
-    """Which flat type to prefer for a band: sky flats in the thermal
-    infrared, lamp flats in the near infrared. ``override`` (e.g. "SKY")
-    wins, letting a user ask for sky flats in JHK."""
+def required_flat_type_for(band, override=None):
+    """Which flat type a band requires: sky flats in the thermal infrared,
+    lamp flats in the near infrared. ``override`` (e.g. "SKY") wins, letting
+    a user ask for sky flats in JHK.
+
+    This is a requirement rather than a preference -- reducing L' data with
+    a lamp flat gives a wrong answer that still looks reasonable -- and is
+    enforced by :func:`reduction.calibrate.find_closest_flat`.
+    """
     if override:
         return str(override).upper()
     key = str(band or "").strip()
-    return defaults.PREFERRED_FLAT_TYPE_BY_BAND.get(
-        key, defaults.DEFAULT_PREFERRED_FLAT_TYPE)
+    return defaults.REQUIRED_FLAT_TYPE_BY_BAND.get(
+        key, defaults.DEFAULT_REQUIRED_FLAT_TYPE)
 
 
-def flat_sort_key(flat, preferred_type=None):
+def flat_sort_key(flat, required_type=None):
     """Sort key implementing the flat preference order.
 
     1. polarimetric flats (critical-angle sets) before all others
     2. flats with a dark subtracted before "+NODARK" variants
-    3. the band-appropriate type (sky for L'/M, lamp for JHK) before others
+    3. the band-required type (sky for L'/M, lamp for JHK) before others
     4. more frames first
     """
     flattype = str(flat.get("FLATTYPE", ""))
@@ -267,7 +269,7 @@ def flat_sort_key(flat, preferred_type=None):
 
     band = str(flat.get("FWINAME")
                or str(flat.get("FILTER", "")).split("+")[0].strip())
-    wanted = preferred_flat_type_for(band, preferred_type)
+    wanted = required_flat_type_for(band, required_type)
 
     if base == wanted:
         type_rank = 0
@@ -280,10 +282,10 @@ def flat_sort_key(flat, preferred_type=None):
             -flat.get("NFRAMES", 0))
 
 
-def make_master_flats(flat_frames, sky_frames, lampon_frames, lampoff_frames,
+def make_master_flats(flat_frames, sky_frames, lampon_frames,
                       master_darks, keylist=None, bad_pixel_mask=None,
                       modulator_keyword=None, critical_angles=None,
-                      preferred_flat_type=None, **kwargs):
+                      required_flat_type=None, **kwargs):
     """Build every available kind of flat and return a single ranked list:
     for any science frame, the first matching flat in the list is the best
     available one.
@@ -296,11 +298,15 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames, lampoff_frames,
     automatically.
 
     Ordering (see :func:`flat_sort_key`): polarimetric flats first, then
-    dark-subtracted before darkless, then the band-appropriate type — sky
+    dark-subtracted before darkless, then the band-required type — sky
     flats for L'/M where the dome lamp is swamped by thermal background,
     lamp flats for JHK — then the set built from the most frames.
-    ``preferred_flat_type`` ("SKY" or "LAMP") overrides the band default,
+    ``required_flat_type`` ("SKY" or "LAMP") overrides the band default,
     e.g. to use sky flats in JHK.
+
+    Ordering is only a preference among *valid* flats; the type requirement
+    itself is enforced later, per science frame, by
+    :func:`reduction.calibrate.find_closest_flat`.
 
     Returns ``(master_flats, masks)`` as flat lists.
     """
@@ -327,13 +333,13 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames, lampoff_frames,
         bad_pixel_mask=bad_pixel_mask, flattype="SKY", **kwargs)
 
     master_flats_lamp, lamp_masks = make_lamp_flats(
-        lampon_frames, lampoff_frames, master_darks, keylist=keylist,
+        lampon_frames, master_darks, keylist=keylist,
         bad_pixel_mask=bad_pixel_mask, **kwargs)
 
     # polarimetric flats keep separate keys so they are never merged away
     combined = {**master_flats, **master_flats_sky, **master_flats_lamp}
     flats = list(combined.values()) + list(pol_flats.values())
-    flats.sort(key=lambda f: flat_sort_key(f, preferred_flat_type))
+    flats.sort(key=lambda f: flat_sort_key(f, required_flat_type))
 
     if flats:
         log.info("Flat preference order: %s",

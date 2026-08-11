@@ -67,7 +67,6 @@ master_flats, flat_masks = make_master_flats(
     load_frames(sorted_files["flats"], rejects=rejects),
     load_frames(sorted_files["flats_sky"], rejects=rejects),
     load_frames(sorted_files["flats_lampon"], rejects=rejects),
-    load_frames(sorted_files["flats_lampoff"], rejects=rejects),
     master_darks,
     bad_pixel_mask=bad_pixel_mask,
 )
