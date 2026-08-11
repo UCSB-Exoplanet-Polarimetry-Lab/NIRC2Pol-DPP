@@ -450,6 +450,24 @@ class NIRC2PolarimetryData(PolarimetryData):
         stack[1] = top[:, self.beam_x_offset:]
         return stack
 
+    def occulting_radius(self, header):
+        """Occulting mask radius [px] from SLITNAME, or None if unocculted.
+
+        NIRC2 names its coronagraphic spots by *diameter* in milliarcsec, so
+        ``corona150`` is 150 mas across: 7.5 px radius at the narrow-camera
+        plate scale, and ``corona400`` is 20.1 px.
+        """
+        name = str(header.get("SLITNAME", "")).strip().lower()
+        if not name.startswith("corona"):
+            return None
+        try:
+            diameter_mas = float(name[len("corona"):])
+        except ValueError:
+            log.warning("Unrecognized coronagraph name %r; treating as "
+                        "unocculted", name)
+            return None
+        return 0.5 * diameter_mas / 1000.0 / PLATE_SCALE
+
     def qu_rotation_angle(self, header, fast_axis_offset=None):
         """Overall polarimetric rotation [deg] (SPIE Eq. 3)::
 

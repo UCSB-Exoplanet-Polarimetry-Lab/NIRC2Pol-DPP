@@ -53,12 +53,19 @@ def _angles_match(a, b, atol):
 
 
 def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
-                         register_kwargs=None):
+                         register_kwargs=None, ip_frame_annulus=None):
     """Mean single difference and sum of all frames in the cycle whose
     modulator angle matches ``angle``. Each frame's beam stack is centered
     on the star first (unless ``register_method`` is None), so frames can
-    be combined and differenced across the cycle."""
+    be combined and differenced across the cycle.
+
+    With ``ip_frame_annulus = (r_inner, r_outer)`` each frame's own
+    instrumental leakage is measured in that annulus and removed from its
+    single difference before averaging, catching leakage that varies within
+    a cycle. See ``polarimetry.instpol.measure_ip_frame``."""
     from reduction.registration import register_beam_stack
+
+    from .instpol import _annulus
 
     diffs, sums = [], []
     for frame in cycle:
@@ -68,6 +75,11 @@ def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
                 stack, _ = register_beam_stack(stack, method=register_method,
                                                **(register_kwargs or {}))
             d, s = single_difference(stack)
+            if ip_frame_annulus is not None:
+                mask = _annulus(s.shape, *ip_frame_annulus) & np.isfinite(s)
+                total = float(np.nansum(s[mask])) if mask.any() else 0.0
+                if total:
+                    d = d - (float(np.nansum(d[mask])) / total) * s
             diffs.append(d)
             sums.append(s)
     if not diffs:
@@ -90,7 +102,8 @@ def _check_background(instrument, cycle):
 
 def double_difference(instrument, cycle, critical_angles=CRITICAL_ANGLES,
                       atol=1.0, register_method="smooth_peak",
-                      register_kwargs=None):
+                      register_kwargs=None, ip=None,
+                      ip_frame_annulus=None):
     """Double differences for one HWP cycle.
 
     ``cycle`` is a list of frames covering all four critical angles (from
@@ -101,6 +114,13 @@ def double_difference(instrument, cycle, critical_angles=CRITICAL_ANGLES,
     beam stack (see ``reduction.registration.find_center``); None to skip.
     ``register_kwargs`` are passed through to that algorithm - needed by
     ``crosscorr``, which requires a ``template=`` reference image.
+
+    ``ip`` is an optional ``instpol.InstrumentalPolarization`` removed from
+    Q/U here, in the instrument frame, which is the only place it is correct
+    to do so: once Q/U have been rotated by ``theta_rot`` the leakage vector
+    would have to be rotated with them. ``ip_frame_annulus`` instead removes
+    a leakage measured per exposure; the two are independent and can be
+    combined.
     """
     _check_background(instrument, cycle)
 
@@ -108,20 +128,29 @@ def double_difference(instrument, cycle, critical_angles=CRITICAL_ANGLES,
 
     diff_qp, sum_qp = _mean_frame_at_angle(instrument, cycle, a_qp, atol,
                                            register_method,
-                                           register_kwargs)
+                                           register_kwargs, ip_frame_annulus)
     diff_qm, sum_qm = _mean_frame_at_angle(instrument, cycle, a_qm, atol,
                                            register_method,
-                                           register_kwargs)
+                                           register_kwargs, ip_frame_annulus)
     diff_up, sum_up = _mean_frame_at_angle(instrument, cycle, a_up, atol,
                                            register_method,
-                                           register_kwargs)
+                                           register_kwargs, ip_frame_annulus)
     diff_um, sum_um = _mean_frame_at_angle(instrument, cycle, a_um, atol,
                                            register_method,
-                                           register_kwargs)
+                                           register_kwargs, ip_frame_annulus)
 
     Q = 0.5 * (diff_qp - diff_qm)
     U = 0.5 * (diff_up - diff_um)
     I = 0.25 * (sum_qp + sum_qm + sum_up + sum_um)
+
+    if ip is not None:
+        from .instpol import subtract_ip
+
+        # the matched intensity of each HWP pair, not the four-angle mean:
+        # Q and U are formed from different exposures, so each is scaled by
+        # the intensity its own pair actually carried
+        Q, U = subtract_ip(Q, U, 0.5 * (sum_qp + sum_qm), ip,
+                           I_u=0.5 * (sum_up + sum_um))
 
     return Q, U, I
 
@@ -141,7 +170,8 @@ def rotate_qu(Q, U, theta_rot_deg):
 def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
                       critical_angles=CRITICAL_ANGLES, atol=1.0,
                       register_method="smooth_peak", derotate=True,
-                      register_kwargs=None):
+                      register_kwargs=None, ip=None,
+                      ip_frame_annulus=None):
     """Build one ``(3, ny, nx)`` Stokes cube [I, Q', U'] from one HWP cycle.
 
     Splits and registers the beams, double-differences the cycle, rotates
@@ -152,7 +182,8 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
     Q, U, I = double_difference(instrument, cycle,
                                 critical_angles=critical_angles, atol=atol,
                                 register_method=register_method,
-                                register_kwargs=register_kwargs)
+                                register_kwargs=register_kwargs, ip=ip,
+                                ip_frame_annulus=ip_frame_annulus)
 
     theta_rot = float(mean_angle(
         [instrument.qu_rotation_angle(f, fast_axis_offset) for f in cycle]))
@@ -175,6 +206,10 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
                 critical_angles=list(critical_angles),
                 registration=register_method,
                 fast_axis_offset=fast_axis_offset,
+                instrumental_polarization=(ip.describe() if ip is not None
+                                           else "none"),
+                ip_frame_annulus=(str(ip_frame_annulus)
+                                  if ip_frame_annulus else "none"),
                 qu_rotation=theta_rot,
                 north_angle=(north if north is not None else "not derotated"))
 

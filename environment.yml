@@ -28,9 +28,10 @@ dependencies:
   - astropy-base >=7.0,<8         # tested on 7.2.0
   - scikit-image >=0.22,<0.27     # tested on 0.26.0
 
-  # only needed for the docs and examples, not by the pipeline modules
+  # only needed for the docs, examples and tests, not by the pipeline modules
   - matplotlib-base >=3.8,<4      # tested on 3.10.8
   - ipykernel                     # to run examples/tutorial.ipynb
+  - pytest >=7                    # tested on 9.1.1; run with: pytest
 
   # Image rotation goes through pyklip.klip.rotate -- deliberate, since it is
   # the validated implementation -- but pyklip is not packaged on conda-forge.

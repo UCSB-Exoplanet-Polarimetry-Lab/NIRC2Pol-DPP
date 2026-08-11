@@ -107,9 +107,14 @@ def _corrected_qu(stacks, oe_shifts, frame_shifts, ipq, ipu):
         diffs.append(d)
         sums.append(s)
 
-    Q = 0.5 * (diffs[0] - diffs[1]) - ipq * 0.5 * (sums[0] + sums[1])
-    U = 0.5 * (diffs[2] - diffs[3]) - ipu * 0.5 * (sums[2] + sums[3])
+    from .instpol import InstrumentalPolarization, subtract_ip
+
+    Q = 0.5 * (diffs[0] - diffs[1])
+    U = 0.5 * (diffs[2] - diffs[3])
     I = 0.25 * (sums[0] + sums[1] + sums[2] + sums[3])
+    Q, U = subtract_ip(Q, U, 0.5 * (sums[0] + sums[1]),
+                       InstrumentalPolarization(ipq, ipu, method="uphi_min"),
+                       I_u=0.5 * (sums[2] + sums[3]))
     return Q, U, I
 
 

@@ -158,6 +158,18 @@ class PolarimetryData(ABC):
         registered to each other (beam 0 and beam 1 cover the same sky).
         """
 
+    def occulting_radius(self, header):
+        """Radius [px] of the focal-plane occulting mask, or None.
+
+        Used by the mask-edge instrumental-polarization method, which needs
+        an annulus just outside the mask where the light is the star's own
+        (assumed unpolarized) PSF. Returning None means "not coronagraphic",
+        and the caller must supply radii itself — for saturated but
+        unocculted data the equivalent boundary is the edge of the saturated
+        core, which the instrument cannot know.
+        """
+        return None
+
     @abstractmethod
     def qu_rotation_angle(self, header, fast_axis_offset=0.0):
         """Angle [deg] by which the measured polarization frame is rotated
