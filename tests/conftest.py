@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from instruments.base import PolarimetryData
+from instruments.nirc2 import NIRC2PolarimetryData
 from utils.frame import Frame
 
 NY = NX = 96
@@ -150,3 +151,147 @@ def clean_cycles(truth):
     return [synth_cycle(truth["theta_off"], 0.0, 0.0,
                         parang=pa, el=45.0 + 0.5 * i, rot=10.0 * i)
             for i, pa in enumerate((-20.0, -5.0, 10.0, 25.0))]
+
+
+# ---------------------------------------------------------------------------
+# A whole synthetic observing night on disk, for the end-to-end test.
+#
+# Unlike the fixtures above, this one goes through the *real* NIRC2 code:
+# sort_frames classifying by header, master darks and flats, reduce_frame
+# inverting the detector model, the product writer and the provenance trail.
+# Only the detector geometry is shrunk, so the test runs in a second rather
+# than allocating thirty 1024x1024 frames.
+# ---------------------------------------------------------------------------
+
+E2E_BEAM_HEIGHT = 48
+E2E_TOP_ROW = 56
+E2E_XOFF = 4
+E2E_NY = E2E_TOP_ROW + E2E_BEAM_HEIGHT     # 104 rows
+E2E_NX = 64
+
+E2E_TRUTH = {
+    "theta_off": 6.0,
+    "ipq": 0.018,
+    "ipu": -0.011,
+    "dark_level": 120.0,
+    "n_cycles": 5,
+}
+
+
+class SmallNIRC2(NIRC2PolarimetryData):
+    """Real NIRC2 behaviour on a small detector.
+
+    Everything inherited -- header classification, the rotation model, the
+    coronagraph lookup -- is the production code. Only the beam cutout
+    geometry and the bad pixel mask are overridden, so the test exercises
+    the pipeline rather than a re-implementation of it.
+    """
+
+    beam_height = E2E_BEAM_HEIGHT
+    bottom_row_start = 0
+    top_row_start = E2E_TOP_ROW
+    beam_x_offset = E2E_XOFF
+    background_method = None
+
+    def bad_pixel_mask(self):
+        return np.zeros((E2E_NY, E2E_NX), dtype=bool)
+
+
+def _e2e_flat_response():
+    """Known multiplicative detector response: a gradient plus a few dead
+    pixels, so flat division has something real to undo."""
+    yy, xx = np.mgrid[:E2E_NY, :E2E_NX]
+    flat = 1.0 + 0.15 * (xx / E2E_NX) - 0.10 * (yy / E2E_NY)
+    flat[20, 30] = 0.35
+    flat[41, 12] = 0.40
+    return flat
+
+
+def _e2e_beam_signal(theta_off, ipq, ipu, parang, el, rot, hwp_index):
+    """True (dark- and flat-free) detector signal for one exposure."""
+    q_phi, u_phi, I, phi = disk_radial_stokes(
+        shape=(E2E_BEAM_HEIGHT, E2E_NX - E2E_XOFF), r_inner=6.0, r_outer=18.0)
+
+    sky_q = q_phi * np.cos(2 * phi) - u_phi * np.sin(2 * phi)
+    sky_u = q_phi * np.sin(2 * phi) + u_phi * np.cos(2 * phi)
+
+    header = {"PARANG": parang, "EL": el, "ROTPDEST": rot}
+    theta = np.radians(SmallNIRC2().qu_rotation_angle(header, theta_off))
+    q_i = sky_q * np.cos(theta) - sky_u * np.sin(theta) + ipq * I
+    u_i = sky_q * np.sin(theta) + sky_u * np.cos(theta) + ipu * I
+
+    d = (q_i, -q_i, u_i, -u_i)[hwp_index]
+    bottom, top = 0.5 * (I - d), 0.5 * (I + d)
+
+    frame = np.zeros((E2E_NY, E2E_NX))
+    frame[0:E2E_BEAM_HEIGHT, :E2E_NX - E2E_XOFF] = bottom
+    frame[E2E_TOP_ROW:E2E_TOP_ROW + E2E_BEAM_HEIGHT, E2E_XOFF:] = top
+    return frame
+
+
+def _e2e_header(obj, shutter, el, **extra):
+    """NIRC2-shaped header, complete enough for sort_frames to classify."""
+    header = {
+        "FILENAME": "synthetic.fits", "FILTER": "Kp + Wollaston",
+        "FWINAME": "Kp", "ITIME": 30.0, "COADDS": 1,
+        "SAMPMODE": 3, "READS": 1, "EL": el,
+        "WCDMSTAT": "open", "WCDTSTAT": "open",
+        "OBJECT": obj, "SHRNAME": shutter, "SLITNAME": "corona400",
+        "DATE-OBS": "2026-06-05", "FRAMENO": 1,
+        "PARANG": 0.0, "ROTPDEST": 0.0, "PCUPR": 0.0,
+    }
+    header.update(extra)
+    return header
+
+
+@pytest.fixture
+def synthetic_night(tmp_path):
+    """Write a full night of raw FITS and return (dir, truth, flat, dark).
+
+    Detector model: ``raw = signal * flat + dark``. reduce_frame has to
+    invert exactly that, so a wrong dark or flat shows up immediately in the
+    recovered Stokes parameters.
+    """
+    from utils.frame import Frame
+
+    flat = _e2e_flat_response()
+    dark = np.full((E2E_NY, E2E_NX), E2E_TRUTH["dark_level"])
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    n = 0
+
+    def write(data, header):
+        nonlocal n
+        n += 1
+        header = dict(header, FRAMENO=n, FILENAME=f"n{n:04d}.fits")
+        path = raw_dir / f"n{n:04d}.fits"
+        Frame(data, header).save(str(path))
+        return str(path)
+
+    # darks: shutter closed, so is_dark_frame picks them up
+    for _ in range(5):
+        write(dark.copy(), _e2e_header("dark", "closed", el=45.0))
+
+    # polarimetric flats: at the flat-field elevation with the shutter open
+    # and high counts, which is what is_lampon_frame keys on
+    from instruments.nirc2 import FLAT_ELEVATION
+
+    for rep in range(3):
+        for angle in CRITICAL:
+            write(5000.0 * flat + dark,
+                  _e2e_header(f"flat_hwp_{angle}", "open",
+                              el=FLAT_ELEVATION, PCUPR=angle))
+
+    # science: N complete HWP cycles at varying parallactic angle
+    for c in range(E2E_TRUTH["n_cycles"]):
+        parang, el, rot = -20.0 + 10.0 * c, 50.0 + c, 5.0 * c
+        for i, angle in enumerate(CRITICAL):
+            signal = _e2e_beam_signal(E2E_TRUTH["theta_off"],
+                                      E2E_TRUTH["ipq"], E2E_TRUTH["ipu"],
+                                      parang, el, rot, i)
+            write(signal * flat + dark,
+                  _e2e_header("SyntheticDisk", "open", el=el, PCUPR=angle,
+                              PARANG=parang, ROTPDEST=rot))
+
+    return {"dir": raw_dir, "truth": E2E_TRUTH, "flat": flat, "dark": dark,
+            "instrument": SmallNIRC2()}

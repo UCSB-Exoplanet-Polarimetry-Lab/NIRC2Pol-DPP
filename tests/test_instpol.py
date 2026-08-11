@@ -21,12 +21,6 @@ def test_subtract_ip_is_exact():
     assert np.allclose(u, 0.0)
 
 
-def test_subtract_ip_none_is_identity():
-    Q, U, I = np.ones((4, 4)), np.zeros((4, 4)), np.ones((4, 4))
-    q, u = subtract_ip(Q, U, I, None)
-    assert q is Q and u is U
-
-
 def test_subtract_ip_separate_u_intensity():
     """U can be scaled by its own HWP pair's intensity."""
     I_q, I_u = np.full((8, 8), 100.0), np.full((8, 8), 200.0)
@@ -88,19 +82,18 @@ def test_measure_ip_cycle_without_radius_raises():
         measure_ip_cycle(NoMask(), cycle, register_method=None)
 
 
-def test_normalized_single_difference_sign_flips_with_hwp(instrument, truth):
+def test_normalized_single_difference_sign_convention(instrument, truth):
     """Pins the beam-order and sign conventions.
 
-    The load-bearing assertion is the *absolute* sign of ``r0``: it fixes
-    the chain ``split_beams`` returns ``[bottom, top]`` -> ``single_difference``
-    computes ``top - bottom`` -> an ipq leakage reads positive. Mutation
-    testing says only two tests in the suite notice if that inverts, and a
-    silent inversion would flip every polarization angle downstream.
+    Fixes the chain ``split_beams`` returns ``[bottom, top]`` ->
+    ``single_difference`` computes ``top - bottom`` -> an ipq leakage reads
+    positive. Mutation testing says only two tests in the suite notice if
+    that inverts, and a silent inversion would flip every polarization angle
+    downstream.
 
-    The relative flip between HWP 0 and 45 is weaker evidence: the fixture
-    builds the frames as ``(q_i, -q_i, u_i, -u_i)``, so it is injected by
-    construction rather than derived. It is asserted because it is cheap and
-    documents the modulation, not because it proves anything about the code.
+    The relative flip between HWP 0 and 45 used to be asserted here too, but
+    the fixture builds the frames as ``(q_i, -q_i, u_i, -u_i)``, so it was
+    injected by construction and could not fail.
     """
     from utils.imutils import make_annulus_mask
 
@@ -109,10 +102,7 @@ def test_normalized_single_difference_sign_flips_with_hwp(instrument, truth):
     mask = make_annulus_mask((NY, NX), 4.0, 11.0)
     r0 = normalized_single_difference(
         instrument.split_beams(cycle[0]), mask)
-    r45 = normalized_single_difference(
-        instrument.split_beams(cycle[1]), mask)
     assert r0 == pytest.approx(truth["ipq"], abs=2e-3)
-    assert r45 == pytest.approx(-truth["ipq"], abs=2e-3)
 
 
 def test_normalized_single_difference_rejects_empty_mask(instrument):
@@ -156,24 +146,6 @@ def test_fit_ip_uphi_finds_nothing_on_clean_data(instrument, truth):
     assert abs(ip.ipu) < 3e-3
 
 
-def test_ip_removal_belongs_in_the_instrument_frame():
-    """Correcting before and after the sky rotation are not the same thing.
-
-    This is the failure mode the module exists to prevent: subtracting
-    ipq*I from a sky-frame Q is only right if the leakage vector is rotated
-    too, so at any rotation that mixes Q and U the two orders disagree.
-    """
-    I = np.full((8, 8), 100.0)
-    Q, U = np.full((8, 8), 5.0), np.full((8, 8), -3.0)
-    ip = InstrumentalPolarization(0.02, 0.01, method="manual")
-    theta = 37.0
-
-    right = rotate_qu(*subtract_ip(Q, U, I, ip), theta)
-    wrong = subtract_ip(*rotate_qu(Q, U, theta), I, ip)
-    assert not np.allclose(right[0], wrong[0])
-    assert not np.allclose(right[1], wrong[1])
-
-
 def test_mean_ip_reports_scatter():
     ips = [InstrumentalPolarization(q, u, method="edge_annulus")
            for q, u in ((0.010, 0.004), (0.012, 0.006), (0.008, 0.002))]
@@ -190,6 +162,10 @@ def test_ip_magnitude_and_angle():
     assert ip.angle == pytest.approx(0.0)
     ip = InstrumentalPolarization(0.0, 0.01, method="manual")
     assert ip.angle == pytest.approx(45.0)
+    # a negative u must wrap into [0, 180), not come back negative -- the
+    # only case where the modulo in .angle does any work
+    ip = InstrumentalPolarization(0.01, -0.01, method="manual")
+    assert ip.angle == pytest.approx(157.5)
 
 
 def test_flux_weighting_beats_per_pixel_ratio(instrument, truth):

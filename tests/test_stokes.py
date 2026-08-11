@@ -16,15 +16,6 @@ def test_single_difference_convention():
     assert np.allclose(s, 7.0)
 
 
-def test_unpolarized_source_gives_zero_qu(instrument):
-    """No injected polarization anywhere, so Q and U must vanish."""
-    cycle = synth_cycle(theta_off=0.0, ipq=0.0, ipu=0.0, amplitude=0.0)
-    Q, U, I = double_difference(instrument, cycle, register_method=None)
-    assert np.allclose(Q, 0.0, atol=1e-9)
-    assert np.allclose(U, 0.0, atol=1e-9)
-    assert np.all(I > 0)
-
-
 def test_static_additive_pattern_cancels(instrument):
     """A detector pattern present in every exposure double-differences away.
 

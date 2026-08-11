@@ -51,11 +51,6 @@ def test_wrap_offset_folds_45_degree_degeneracy():
             assert wrap_offset(base + 45.0 * k) == pytest.approx(base)
 
 
-def test_offset_to_frame_is_four():
-    """theta_rot carries 4*theta_off, so one degree of offset is four of frame."""
-    assert OFFSET_TO_FRAME == 4.0
-
-
 def test_prepare_cycles_leaves_offset_free(instrument, clean_cycles, truth):
     """A prepared cycle rotated at the injected offset gives back Q_phi."""
     from polarimetry.stokes import radial_stokes

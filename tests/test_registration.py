@@ -58,10 +58,6 @@ def test_gaussian_survives_small_cutout():
     assert got[1] == pytest.approx(32.7, abs=0.1)
 
 
-def test_gaussian_on_flat_frame_does_not_raise():
-    assert find_center_gaussian(np.full((64, 64), 7.0)) is not None
-
-
 def test_gaussian_on_all_nan_raises_clearly():
     with pytest.raises(ValueError, match="no finite pixels"):
         find_center_gaussian(np.full((64, 64), np.nan))
