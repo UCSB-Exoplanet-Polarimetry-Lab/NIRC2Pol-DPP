@@ -26,7 +26,24 @@ log = logging.getLogger(__name__)
 
 def find_matching_master(frame, masters, keylist):
     """First master whose header matches ``frame`` on every keyword in
-    ``keylist``. Returns ``(index, master)`` or ``(None, None)``."""
+        ``keylist``. Returns ``(index, master)`` or ``(None, None)``.
+
+    Parameters
+    ----------
+    frame : Frame
+        Science frame to match.
+    masters : list of Frame
+        Candidate calibration masters.
+    keylist : list of str
+        Header keywords that must all agree.
+
+    Returns
+    -------
+    index : int or None
+        Position of the match in the list, or None.
+    master : Frame or None
+        The matching master, or None when nothing matched.
+    """
     if not masters:
         return None, None
     for i, m in enumerate(masters):
@@ -40,27 +57,58 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
                       allow_flat_type_mismatch=False):
     """Find the best-matching flat.
 
-    Two things are mandatory. The filter must always match — a flat in another filter describes the
-    wrong throughput pattern — but exposure settings are irrelevant, since
-    the flat is normalized. Detector size is only a preference: a flat
-    covering a *larger* region is trimmed to the frame, so a full-frame
-    flat can calibrate a subarray exposure. Matching therefore tries
-    "same filter and same size" first, then "same filter, any size"
-    (``reduction.defaults.RANKED_FLATS_KEYLISTS``). Within each level the
-    flats keep the preference order set by ``make_master_flats``
-    (polarimetric first, then the band-appropriate lamp/sky type).
+        Two things are mandatory. The filter must always match — a flat in another filter describes the
+        wrong throughput pattern — but exposure settings are irrelevant, since
+        the flat is normalized. Detector size is only a preference: a flat
+        covering a *larger* region is trimmed to the frame, so a full-frame
+        flat can calibrate a subarray exposure. Matching therefore tries
+        "same filter and same size" first, then "same filter, any size"
+        (``reduction.defaults.RANKED_FLATS_KEYLISTS``). Within each level the
+        flats keep the preference order set by ``make_master_flats``
+        (polarimetric first, then the band-appropriate lamp/sky type).
 
-    The flat *type* must also match what the band requires: sky flats at
-    L'/M, where the dome lamp is swamped by thermal background, and lamp
-    flats in JHK. Reducing with the wrong kind produces a wrong answer that
-    still looks reasonable, so a mismatch raises ``ValueError`` rather than
-    substituting. ``required_flat_type`` overrides the band default and
-    ``allow_flat_type_mismatch=True`` downgrades the error to a warning for
-    anyone who genuinely wants it.
+        The flat *type* must also match what the band requires: sky flats at
+        L'/M, where the dome lamp is swamped by thermal background, and lamp
+        flats in JHK. Reducing with the wrong kind produces a wrong answer that
+        still looks reasonable, so a mismatch raises ``ValueError`` rather than
+        substituting. ``required_flat_type`` overrides the band default and
+        ``allow_flat_type_mismatch=True`` downgrades the error to a warning for
+        anyone who genuinely wants it.
 
-    ``exceptions`` maps a filter substring to a tuple of acceptable
-    substitute filter names, for filters that have no flats of their own
-    (e.g. NIRC2 narrowband — see ``instruments.nirc2.FLAT_EXCEPTIONS``).
+        ``exceptions`` maps a filter substring to a tuple of acceptable
+        substitute filter names, for filters that have no flats of their own
+        (e.g. NIRC2 narrowband — see ``instruments.nirc2.FLAT_EXCEPTIONS``).
+
+    Parameters
+    ----------
+    frame : Frame
+        Science frame needing a flat.
+    master_flats : list of Frame
+        Candidates, already in preference order from
+        :func:`reduction.masters.make_master_flats`.
+    ranked_keylists : list of list of str, optional
+        Matching criteria from strictest to loosest; defaults to
+        ``reduction.defaults.RANKED_FLATS_KEYLISTS``.
+    exceptions : dict, optional
+        Maps a filter substring to acceptable substitutes.
+    required_flat_type : str, optional
+        Override the band's required type, ``"SKY"`` or ``"LAMP"``.
+    allow_flat_type_mismatch : bool, optional
+        Downgrade a type mismatch from an error to a warning, recording
+        ``FLATMISM`` in the returned flat's header.
+
+    Returns
+    -------
+    index : int or None
+        Position of the match in the list, or None.
+    master : Frame or None
+        The matching master, or None when nothing matched.
+
+    Raises
+    ------
+    ValueError
+        If the best match is not the type the band requires and
+        ``allow_flat_type_mismatch`` is False.
     """
     from .masters import required_flat_type_for
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
@@ -127,8 +175,31 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
 
 def find_closest_dark(frame, master_darks, ranked_keylists=None):
     """Find the best-matching dark, relaxing the match criteria step by step
-    (see ``reduction.defaults.RANKED_DARKS_KEYLISTS``). When only ITIME
-    matches, the dark is rescaled by the frame's COADDS and cropped to size.
+        (see ``reduction.defaults.RANKED_DARKS_KEYLISTS``). When only ITIME
+        matches, the dark is rescaled by the frame's COADDS and cropped to size.
+
+    Parameters
+    ----------
+    frame : Frame
+        Science frame needing a dark.
+    master_darks : list of Frame
+        Candidates.
+    ranked_keylists : list of list of str, optional
+        Matching criteria from strictest to loosest; defaults to
+        ``reduction.defaults.RANKED_DARKS_KEYLISTS``.
+
+    Returns
+    -------
+    index : int or None
+        Position of the match in the list, or None.
+    master : Frame or None
+        The matching master, or None when nothing matched.
+
+    Notes
+    -----
+    The loosest level matches on ITIME alone, at which point the dark is
+    rescaled by the frame's COADDS and cropped to size -- so one set of
+    full-frame darks can serve every subarray of a night.
     """
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
                        else defaults.RANKED_DARKS_KEYLISTS)
@@ -169,7 +240,24 @@ def find_closest_dark(frame, master_darks, ranked_keylists=None):
 
 def find_closest_sky(frame, master_skies, ranked_keylists=None):
     """Find the best-matching sky, relaxing FILTER/ITIME/COADDS step by step
-    and rescaling by exposure time and coadds for the looser matches."""
+        and rescaling by exposure time and coadds for the looser matches.
+
+    Parameters
+    ----------
+    frame : Frame
+        Science frame needing a sky.
+    master_skies : list of Frame
+        Candidates.
+    ranked_keylists : list of list of str, optional
+        Matching criteria from strictest to loosest.
+
+    Returns
+    -------
+    index : int or None
+        Position of the match in the list, or None.
+    master : Frame or None
+        The matching master, or None when nothing matched.
+    """
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
                        else defaults.RANKED_SKIES_KEYLISTS)
 
@@ -344,7 +432,24 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
 
 def local_median_replace_bad_pixels(data, mask, median_size, fail_val=0.0):
     """Replace masked pixels in-place with the median of the good pixels in
-    a ``median_size`` x ``median_size`` window around each."""
+        a ``median_size`` x ``median_size`` window around each.
+
+    Parameters
+    ----------
+    data : ndarray
+        Image, modified in place.
+    mask : ndarray of bool
+        True where pixels must be replaced.
+    median_size : int
+        Side of the neighbourhood used for each replacement.
+    fail_val : float, optional
+        Value used where the neighbourhood holds no good pixels.
+
+    Returns
+    -------
+    None
+        ``data`` is modified in place.
+    """
     half = median_size // 2
     height, width = data.shape
 
@@ -361,7 +466,22 @@ def local_median_replace_bad_pixels(data, mask, median_size, fail_val=0.0):
 
 def local_interpolate_bad_pixels(data, mask, kernel_size):
     """Replace masked pixels in-place by thin-plate-spline interpolation of
-    the good pixels in a local window around each bad pixel."""
+        the good pixels in a local window around each bad pixel.
+
+    Parameters
+    ----------
+    data : ndarray
+        Image, modified in place.
+    mask : ndarray of bool
+        True where pixels must be replaced.
+    kernel_size : int
+        Side of the neighbourhood interpolated over.
+
+    Returns
+    -------
+    None
+        ``data`` is modified in place.
+    """
     half = kernel_size // 2
     height, width = data.shape
 
@@ -374,7 +494,29 @@ def local_interpolate_bad_pixels(data, mask, kernel_size):
 
 def interpolate_bad_pixels(data, mask, fail_val=0.0):
     """Thin-plate-spline interpolate all masked pixels of ``data`` in-place
-    from the unmasked pixels."""
+        from the unmasked pixels.
+
+    Parameters
+    ----------
+    data : ndarray
+        Image, modified in place.
+    mask : ndarray of bool
+        True where pixels must be replaced.
+    fail_val : float, optional
+        Value used when the interpolation cannot be solved.
+
+    Returns
+    -------
+    None
+        ``data`` is modified in place.
+
+    Notes
+    -----
+    Clustered bad pixels can leave the radial-basis-function solve singular,
+    because the surviving good pixels are collinear. That is why the Cygnus A
+    detector defect is blanked to NaN rather than having its mask dilated --
+    growing the mask made the interpolator fail outright.
+    """
     from scipy.interpolate import RBFInterpolator
 
     good = np.argwhere(~mask)

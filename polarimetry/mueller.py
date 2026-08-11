@@ -28,8 +28,23 @@ class MuellerMatrixModel(ABC):
     @abstractmethod
     def correct(self, stokes_cube, header):
         """Apply the instrumental polarization correction to a
-        ``(3, ny, nx)`` measured Stokes cube [I, Q, U], returning the
-        corrected cube in the sky frame."""
+                ``(3, ny, nx)`` measured Stokes cube [I, Q, U], returning the
+                corrected cube in the sky frame.
+
+        Rotate instrument-frame Q/U into the sky frame.
+
+        Parameters
+        ----------
+        Q, U : ndarray
+            Instrument-frame Stokes planes.
+        header : Frame or Header
+            Frame supplying the rotation angle.
+
+        Returns
+        -------
+        tuple of ndarray
+            ``(Q_sky, U_sky)``.
+        """
 
 
 class RotationApproximationModel(MuellerMatrixModel):
@@ -38,10 +53,33 @@ class RotationApproximationModel(MuellerMatrixModel):
     polarization terms. Wraps ``instrument.qu_rotation_angle``."""
 
     def __init__(self, instrument, fast_axis_offset=0.0):
+        """Bind the model to an instrument and a fast axis offset.
+
+        Parameters
+        ----------
+        instrument : PolarimetryData
+            Instrument whose rotation model is used.
+        fast_axis_offset : float, optional
+            theta_off in degrees.
+        """
         self.instrument = instrument
         self.fast_axis_offset = fast_axis_offset
 
     def correct(self, stokes_cube, header):
+        """Rotate instrument-frame Q/U into the sky frame.
+
+        Parameters
+        ----------
+        Q, U : ndarray
+            Instrument-frame Stokes planes.
+        header : Frame or Header
+            Frame supplying the rotation angle.
+
+        Returns
+        -------
+        tuple of ndarray
+            ``(Q_sky, U_sky)``.
+        """
         from .stokes import rotate_qu
 
         I, Q, U = stokes_cube
@@ -119,6 +157,22 @@ def _corrected_qu(stacks, oe_shifts, frame_shifts, ipq, ipu):
 
 
 def _unpack(x):
+    """Split the flat parameter vector into its parts.
+
+    Parameters
+    ----------
+    x : ndarray
+        The 16 fitted parameters.
+
+    Returns
+    -------
+    oe_shifts : ndarray
+        ``(4, 2)`` bottom-beam shifts, one per critical angle.
+    frame_shifts : ndarray
+        ``(3, 2)`` shifts of frames 2-4 relative to frame 1.
+    ipq, ipu : float
+        Instrumental polarization terms.
+    """
     oe_shifts = x[0:8].reshape(4, 2)
     frame_shifts = x[8:14].reshape(3, 2)
     return oe_shifts, frame_shifts, x[14], x[15]
@@ -177,6 +231,7 @@ def fit_empirical_cycle_correction(instrument, cycle, fast_axis_offset,
                & ~make_circle_mask(shape, mask_radius))
 
     def objective(x):
+        """U_phi scatter for one trial parameter vector; lower is better."""
         Q, U, _ = _corrected_qu(stacks, *_unpack(x))
         _, u_phi = radial_stokes(*rotate_qu(Q, U, eff_rot))
         return float(np.nanstd(u_phi[annulus]))

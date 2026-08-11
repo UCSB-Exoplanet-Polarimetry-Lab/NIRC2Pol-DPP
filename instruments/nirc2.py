@@ -134,6 +134,21 @@ def _small_angle_distance(a, b):
 
 
 def _at_flat_position(frame, arcsec_threshold):
+    """Is the telescope parked for dome flats?
+
+    Parameters
+    ----------
+    frame : Frame
+        Frame to test.
+    arcsec_threshold : float
+        Tolerance on the elevation, in arcseconds.
+
+    Returns
+    -------
+    bool
+        True when the elevation is at the flat-field position, both AO loops
+        are open or idle, and the shutter is open.
+    """
     distance_arcsec = 3600.0 * _small_angle_distance(
         (0.0, FLAT_ELEVATION), (0.0, frame["EL"]))
     dm_open = str(frame["WCDMSTAT"]).lower() in ("open", "idle")
@@ -170,15 +185,30 @@ def is_dark_frame(frame):
 def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
     """Classify raw NIRC2 FITS files by type using their headers.
 
-    Returns a dict of filename lists with keys ``"sci"``, ``"flats"``,
-    ``"flats_sky"``, ``"flats_lampon"``, ``"darks"``. Frames missing
-    required header keywords are dropped with a warning.
+        Returns a dict of filename lists with keys ``"sci"``, ``"flats"``,
+        ``"flats_sky"``, ``"flats_lampon"``, ``"darks"``. Frames missing
+        required header keywords are dropped with a warning.
 
-    Lamp-on flats stay in ``flats_lampon`` and become LAMP-type masters.
-    They used to be moved into the generic ``flats`` bucket whenever no
-    lamp-off frames existed, which is always -- and since that bucket is
-    tagged REGULAR, the band's required flat type then matched nothing and
-    the requirement was silently inert.
+        Lamp-on flats stay in ``flats_lampon`` and become LAMP-type masters.
+        They used to be moved into the generic ``flats`` bucket whenever no
+        lamp-off frames existed, which is always -- and since that bucket is
+        tagged REGULAR, the band's required flat type then matched nothing and
+        the requirement was silently inert.
+
+    Classify raw files by type, from their headers.
+
+    Parameters
+    ----------
+    filenames : iterable of str
+        Raw FITS paths.
+    **kwargs
+        Passed to :func:`sort_frames`.
+
+    Returns
+    -------
+    dict
+        Filename lists under ``"sci"``, ``"flats"``, ``"flats_sky"``,
+        ``"flats_lampon"`` and ``"darks"``.
     """
     from utils.frame import Frame
 
@@ -394,21 +424,97 @@ class NIRC2PolarimetryData(PolarimetryData):
     fast_axis_offset = 0.0
 
     def gain(self, header):
+        """Detector gain [e-/ADU] for this frame's epoch.
+
+        Parameters
+        ----------
+        header : Frame or Header
+            Frame whose ``DATE-OBS`` selects the epoch.
+
+        Returns
+        -------
+        float
+            The gain. NIRC2's detector was replaced in late 2023, changing both
+            gain and well depth.
+        """
         return get_gain(header["DATE-OBS"])
 
     def saturation_limit(self, header):
+        """Saturation level [ADU] for this frame's epoch.
+
+        Parameters
+        ----------
+        header : Frame or Header
+            Frame whose ``DATE-OBS`` selects the epoch.
+
+        Returns
+        -------
+        float
+            Level above which pixels are treated as saturated and given the wider
+            "+" shaped mask, since saturation bleeds along detector columns.
+        """
         return get_saturation_limit(header["DATE-OBS"])
 
     def readnoise(self, header):
+        """Read noise [e-] for this frame.
+
+        Parameters
+        ----------
+        header : Frame or Header
+            Frame to describe.
+
+        Returns
+        -------
+        float
+            Read noise in electrons.
+        """
         return get_readnoise(header["SAMPMODE"])
 
     def bad_pixel_mask(self):
+        """Static detector bad-pixel mask.
+
+        Returns
+        -------
+        ndarray of bool
+            True on known-bad pixels, loaded from ``instruments/masks/``. Dated
+            2023, so it predates the current detector: defects that have grown
+            since are only partly covered.
+        """
         return load_bad_pixel_mask()
 
     def sort_frames(self, filenames, **kwargs):
+        """Classify raw files by type, from their headers.
+
+        Parameters
+        ----------
+        filenames : iterable of str
+            Raw FITS paths.
+        **kwargs
+            Passed to :func:`sort_frames`.
+
+        Returns
+        -------
+        dict
+            Filename lists under ``"sci"``, ``"flats"``, ``"flats_sky"``,
+            ``"flats_lampon"`` and ``"darks"``.
+        """
         return sort_frames(filenames, **kwargs)
 
     def north_angle(self, header):
+        """Angle from image up to celestial north [deg].
+
+        Parameters
+        ----------
+        header : Frame or Header
+            Frame to describe.
+
+        Returns
+        -------
+        float
+            The mean angle; derotate by minus this. See
+            :func:`calculate_north_angle` for the full model, including the
+            parallactic smear through a long exposure.
+        """
         return calculate_north_angle(header)[0]
 
     def modulator_angle(self, header):

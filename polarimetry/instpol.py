@@ -123,6 +123,22 @@ def subtract_ip(Q, U, I, ip, I_u=None):
 
 
 def _annulus(shape, r_inner, r_outer, center=None):
+    """Annulus mask, wrapping :func:`utils.imutils.make_annulus_mask`.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        ``(ny, nx)``.
+    r_inner, r_outer : float
+        Radii in pixels.
+    center : tuple of float, optional
+        ``(cy, cx)``; defaults to the image centre.
+
+    Returns
+    -------
+    ndarray of bool
+        True inside the annulus.
+    """
     from utils.imutils import make_annulus_mask
 
     return make_annulus_mask(shape, r_inner, r_outer, center=center)
@@ -322,6 +338,7 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
     Iu = 0.5 * (sums[2] + sums[3])
 
     def objective(x):
+        """U_phi scatter for a trial ``(ipq, ipu)``; lower is better."""
         q, u = rotate_qu(Q0 - x[0] * Iq, U0 - x[1] * Iu, eff_rot)
         _, u_phi = radial_stokes(q, u)
         return float(np.nanstd(u_phi[annulus]))

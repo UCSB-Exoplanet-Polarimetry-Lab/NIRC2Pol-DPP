@@ -53,6 +53,19 @@ class ProductWriter:
 
     def __init__(self, output_dir, target="target", overwrite=True,
                  save_cycle_files=True):
+        """Create a writer rooted at one output directory.
+
+        Parameters
+        ----------
+        output_dir : str
+            Directory for the products; created if absent.
+        target : str, optional
+            Prefix for every filename, so several targets can share a directory.
+        overwrite : bool, optional
+            Replace existing files.
+        save_cycle_files : bool, optional
+            Also write one file per HWP cycle beside the stacked cube.
+        """
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         self.target = target
         self.overwrite = overwrite
@@ -67,6 +80,26 @@ class ProductWriter:
         return os.path.join(self.output_dir, f"{self.target}_{name}")
 
     def _save(self, data, header, name, step=None, **params):
+        """Write one product, stamping its provenance.
+
+        Parameters
+        ----------
+        data : ndarray
+            Array to write.
+        header : Header or None
+            Header to carry across.
+        name : str
+            Product name; the filename becomes ``<target>_<name>``.
+        step : str, optional
+            Provenance step recorded via ``utils.provenance.record_step``.
+        **params
+            Extra provenance parameters.
+
+        Returns
+        -------
+        str
+            The path written.
+        """
         frame = Frame(data, header.copy() if header is not None else None)
         if step:
             record_step(frame, step, **params)

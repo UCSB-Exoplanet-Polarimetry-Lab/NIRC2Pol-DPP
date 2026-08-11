@@ -191,6 +191,33 @@ def combine_at_offset(prepared, theta_off, ip=None):
 
 def _uphi_score(prepared, theta_off, ip, center, r_inner, r_outer,
                 score="uphi_sum"):
+    """Score one trial offset; lower is better.
+
+    Parameters
+    ----------
+    prepared : list of PreparedCycle
+        Cycles to combine.
+    theta_off : float
+        Trial offset in degrees.
+    ip : InstrumentalPolarization or None
+        Leakage removed before rotating.
+    center : tuple of float or None
+        Centre of the azimuthal pattern.
+    r_inner, r_outer : float
+        Annulus over which to score.
+    score : {"uphi_sum", "uphi_std"}
+        Which statistic to use; see :func:`scan_fast_axis_offset`.
+
+    Returns
+    -------
+    float
+        The score.
+
+    Raises
+    ------
+    ValueError
+        If ``score`` is not one of the two known statistics.
+    """
     from .stokes import radial_stokes
 
     Q, U, _ = combine_at_offset(prepared, theta_off, ip)
@@ -270,6 +297,13 @@ class FastAxisResult:
     scan: tuple = ()                  # (offsets, scores) if requested
 
     def describe(self):
+        """One-line summary of the fit, for logs.
+
+        Returns
+        -------
+        str
+            The offset, the jointly fitted IP if any, and whether it converged.
+        """
         s = f"theta_off={self.theta_off:+.4f} deg (on-sky butterfly"
         if self.ip is not None:
             s += f", joint IP {self.ip.describe()}"
