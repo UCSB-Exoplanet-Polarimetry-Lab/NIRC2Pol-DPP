@@ -11,8 +11,8 @@ Two ways to measure it are provided, because neither works everywhere:
     Minimize the U_phi residual. Needs a bright, azimuthally polarized
     source (a disk) filling a usable annulus.
 
-``measure_ip_edge``
-    Take the normalized difference right outside the occulting mask or the
+``measure_ip_cycle``
+    Take the normalized Stokes right outside the occulting mask or the
     saturated core, where the flux is the star's own PSF and is assumed
     intrinsically unpolarized. Needs high-contrast data.
 
@@ -132,7 +132,7 @@ def measure_ip_annulus(Q, U, I, r_inner, r_outer, center=None,
                        method="edge_annulus", scope="cycle"):
     """Leakage from the flux-weighted normalized Stokes in an annulus.
 
-    The primitive behind :func:`measure_ip_edge`, exposed separately so it
+    The primitive behind :func:`measure_ip_cycle`, exposed separately so it
     can be used on any Q/U/I you already have — a median cube, a single
     cycle, a synthetic test case.
 
@@ -183,9 +183,14 @@ def measure_ip_annulus(Q, U, I, r_inner, r_outer, center=None,
                      "npix": npix, "total_i": total_i})
 
 
-def measure_ip_edge(instrument, cycle, r_inner=None, r_outer=None,
+def measure_ip_cycle(instrument, cycle, r_inner=None, r_outer=None,
                     center=None, scope="cycle", **dd_kwargs):
-    """Measure IP just outside the occulting mask, for one HWP cycle.
+    """Measure IP over one HWP cycle, from an annulus of starlight.
+
+    The convenience wrapper: it runs ``double_difference`` to obtain the
+    cycle's Q/U/I, defaults the annulus to the instrument's occulting mask,
+    and hands off to :func:`measure_ip_annulus`. Identical arithmetic to
+    calling that directly on Stokes planes you already have.
 
     Builds the cycle's instrument-frame Q/U/I and calls
     :func:`measure_ip_annulus` on an annulus at the mask edge.
@@ -201,8 +206,9 @@ def measure_ip_edge(instrument, cycle, r_inner=None, r_outer=None,
         unocculted but saturated data, where the "mask" is the saturated
         core and the instrument cannot know its size.
     scope : {"cycle", "sequence"}
-        Recorded on the result; ``"frame"`` is not produced here — see
-        :func:`measure_ip_frame`.
+        Recorded on the result. For a *per-exposure* value see
+        ``polarimetry.stokes.normalized_single_difference``, and remove it
+        with ``double_difference(ip_frame_annulus=...)``.
     **dd_kwargs
         Forwarded to ``double_difference`` (``register_method``, etc).
 
@@ -236,48 +242,6 @@ def measure_ip_edge(instrument, cycle, r_inner=None, r_outer=None,
                             method="edge_annulus", scope=scope)
     log.info("Mask-edge IP: %s", ip.describe())
     return ip
-
-
-def measure_ip_frame(instrument, frame, r_inner, r_outer, center=None,
-                     register_method="smooth_peak", register_kwargs=None):
-    """Measure the leakage of a **single exposure** from its normalized
-    single difference.
-
-    Where :func:`measure_ip_edge` gives one number per HWP cycle, this gives
-    one per frame: ``r = sum(top - bottom) / sum(top + bottom)`` in the
-    annulus. Subtracting ``r * (top + bottom)`` from the single difference
-    before double differencing removes leakage that varies between the four
-    exposures of a cycle, which a per-cycle value cannot reach.
-
-    Returns a plain ``float``, not an :class:`InstrumentalPolarization`:
-    a single difference at one HWP angle is not yet Q or U, so the value is
-    a normalized difference rather than an ipq/ipu pair.
-
-    Notes
-    -----
-    Same unpolarized-annulus assumption as :func:`measure_ip_annulus`.
-    Noisier than the per-cycle value by roughly the square root of the
-    number of frames per angle — worth it only when the leakage really does
-    move frame to frame, which is worth checking before switching this on.
-    """
-    from reduction.registration import register_beam_stack
-
-    from .stokes import single_difference
-
-    stack = instrument.subtract_background(instrument.split_beams(frame))
-    if register_method is not None:
-        stack, _ = register_beam_stack(stack, method=register_method,
-                                       **(register_kwargs or {}))
-    d, s = single_difference(stack)
-
-    mask = _annulus(s.shape, r_inner, r_outer, center) & np.isfinite(s)
-    if not mask.any():
-        raise ValueError(f"IP annulus r={r_inner}-{r_outer} px is empty on a "
-                         f"{s.shape[0]}x{s.shape[1]} beam window")
-    total = float(np.nansum(s[mask]))
-    if not np.isfinite(total) or total == 0.0:
-        raise ValueError("IP annulus has zero total intensity")
-    return float(np.nansum(d[mask])) / total
 
 
 def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
@@ -327,7 +291,7 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
     **Assumes the source is azimuthally polarized.** Do not use it on a
     target where that is the hypothesis under test — it will happily rotate
     a genuine U_phi signal into Q_phi and report a confident answer. For an
-    AGN, a merger or a star field, use :func:`measure_ip_edge`.
+    AGN, a merger or a star field, use :func:`measure_ip_cycle`.
     """
     from scipy.optimize import minimize
 

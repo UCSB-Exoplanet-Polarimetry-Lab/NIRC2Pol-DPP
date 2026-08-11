@@ -5,9 +5,10 @@ import pytest
 
 from conftest import NX, NY, synth_cycle
 from polarimetry.instpol import (InstrumentalPolarization, fit_ip_uphi,
-                                 mean_ip, measure_ip_annulus, measure_ip_edge,
-                                 measure_ip_frame, subtract_ip)
-from polarimetry.stokes import double_difference, rotate_qu
+                                 mean_ip, measure_ip_annulus,
+                                 measure_ip_cycle, subtract_ip)
+from polarimetry.stokes import (double_difference,
+                                normalized_single_difference, rotate_qu)
 
 
 def test_subtract_ip_is_exact():
@@ -53,28 +54,28 @@ def test_measure_ip_annulus_rejects_empty_annulus():
         measure_ip_annulus(a, a, a, 100, 200)
 
 
-def test_measure_ip_edge_recovers_injection(instrument, truth):
+def test_measure_ip_cycle_recovers_injection(instrument, truth):
     """The mask-edge method, per cycle, on data with a known leakage.
 
     The annulus sits just outside the disk's inner edge where the halo
     dominates, so the disk's own polarization contributes little.
     """
     cycle = synth_cycle(truth["theta_off"], truth["ipq"], truth["ipu"])
-    ip = measure_ip_edge(instrument, cycle, r_inner=4.0, r_outer=11.0,
+    ip = measure_ip_cycle(instrument, cycle, r_inner=4.0, r_outer=11.0,
                          register_method=None)
     assert ip.ipq == pytest.approx(truth["ipq"], abs=2e-3)
     assert ip.ipu == pytest.approx(truth["ipu"], abs=2e-3)
     assert ip.method == "edge_annulus"
 
 
-def test_measure_ip_edge_uses_instrument_occulting_radius(instrument, truth):
+def test_measure_ip_cycle_uses_instrument_occulting_radius(instrument, truth):
     """With no radii given it falls back to the instrument's mask size."""
     cycle = synth_cycle(truth["theta_off"], truth["ipq"], truth["ipu"])
-    ip = measure_ip_edge(instrument, cycle, register_method=None)
+    ip = measure_ip_cycle(instrument, cycle, register_method=None)
     assert ip.diagnostics["r_inner"] == pytest.approx(12.0)
 
 
-def test_measure_ip_edge_without_radius_raises():
+def test_measure_ip_cycle_without_radius_raises():
     """Non-coronagraphic data must be given an explicit annulus."""
     from conftest import SyntheticPolarimetryData
 
@@ -84,23 +85,35 @@ def test_measure_ip_edge_without_radius_raises():
 
     cycle = synth_cycle(0.0)
     with pytest.raises(ValueError, match="No occulting radius"):
-        measure_ip_edge(NoMask(), cycle, register_method=None)
+        measure_ip_cycle(NoMask(), cycle, register_method=None)
 
 
-def test_measure_ip_frame_matches_per_cycle(instrument, truth):
-    """Per-frame leakage on noiseless data agrees with the per-cycle value.
+def test_normalized_single_difference_sign_flips_with_hwp(instrument, truth):
+    """One exposure carries one modulated combination of Q and U.
 
     At HWP 0 the single difference is +Q, so its normalized value in an
-    unpolarized annulus is ipq; at 45 deg it is -Q, hence -ipq.
+    unpolarized annulus is +ipq; at 45 deg the difference is -Q, hence
+    -ipq. That sign flip is exactly why a single exposure cannot give an
+    ipq/ipu pair, and why this returns a bare float.
     """
+    from utils.imutils import make_annulus_mask
+
     cycle = synth_cycle(theta_off=0.0, ipq=truth["ipq"], ipu=0.0,
                         parang=0.0, el=0.0, rot=0.0)
-    r0 = measure_ip_frame(instrument, cycle[0], 4.0, 11.0,
-                          register_method=None)
-    r45 = measure_ip_frame(instrument, cycle[1], 4.0, 11.0,
-                           register_method=None)
+    mask = make_annulus_mask((NY, NX), 4.0, 11.0)
+    r0 = normalized_single_difference(
+        instrument.split_beams(cycle[0]), mask)
+    r45 = normalized_single_difference(
+        instrument.split_beams(cycle[1]), mask)
     assert r0 == pytest.approx(truth["ipq"], abs=2e-3)
     assert r45 == pytest.approx(-truth["ipq"], abs=2e-3)
+
+
+def test_normalized_single_difference_rejects_empty_mask(instrument):
+    cycle = synth_cycle(0.0)
+    empty = np.zeros((NY, NX), dtype=bool)
+    with pytest.raises(ValueError, match="no finite pixels"):
+        normalized_single_difference(instrument.split_beams(cycle[0]), empty)
 
 
 def test_ip_frame_annulus_removes_leakage(instrument, truth):

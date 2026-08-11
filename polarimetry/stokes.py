@@ -44,6 +44,40 @@ def single_difference(beam_stack):
     return beam_stack[1] - beam_stack[0], beam_stack[1] + beam_stack[0]
 
 
+def normalized_single_difference(beam_stack, mask=None):
+    """Flux-weighted normalized single difference, ``sum(d) / sum(s)``.
+
+    For a registered ``(2, ny, nx)`` beam stack this is the fractional
+    imbalance between the two Wollaston beams over ``mask`` (default: every
+    finite pixel) — the single-exposure analogue of ``q = Q/I``.
+
+    What it *means* depends on where you measure it and is the caller's
+    business. Over a region of intrinsically unpolarized starlight, such as
+    just outside an occulting mask or a saturated core, it is an estimate of
+    the instrumental I -> Q/U leakage for that exposure, which is how
+    ``double_difference(ip_frame_annulus=...)`` uses it. Over a polarized
+    source it is simply the modulated signal.
+
+    Note this is *not* an ipq/ipu pair: one exposure sits at a single HWP
+    angle, so it carries one modulated combination of Q and U (at HWP 0 it
+    is +Q, at 45 deg -Q, at 22.5 deg +U), not both.
+
+    Returns a plain float. Raises ``ValueError`` if the mask selects nothing
+    or the summed intensity is zero, since the ratio is then meaningless
+    rather than merely noisy.
+    """
+    d, s = single_difference(beam_stack)
+    m = np.isfinite(s) if mask is None else (mask & np.isfinite(s))
+    if not m.any():
+        raise ValueError("normalized_single_difference: mask selects no "
+                         "finite pixels")
+    total = float(np.nansum(s[m]))
+    if not np.isfinite(total) or total == 0.0:
+        raise ValueError("normalized_single_difference: summed intensity is "
+                         "zero over the mask")
+    return float(np.nansum(d[m])) / total
+
+
 def _angles_match(a, b, atol):
     """Circular comparison of modulator angles modulo 180 deg (so -0.002
     matches 0, and 179.9 matches 0)."""
@@ -62,7 +96,7 @@ def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
     With ``ip_frame_annulus = (r_inner, r_outer)`` each frame's own
     instrumental leakage is measured in that annulus and removed from its
     single difference before averaging, catching leakage that varies within
-    a cycle. See ``polarimetry.instpol.measure_ip_frame``."""
+    a cycle. See :func:`normalized_single_difference`."""
     from reduction.registration import register_beam_stack
 
     from .instpol import _annulus
@@ -76,10 +110,9 @@ def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
                                                **(register_kwargs or {}))
             d, s = single_difference(stack)
             if ip_frame_annulus is not None:
-                mask = _annulus(s.shape, *ip_frame_annulus) & np.isfinite(s)
-                total = float(np.nansum(s[mask])) if mask.any() else 0.0
-                if total:
-                    d = d - (float(np.nansum(d[mask])) / total) * s
+                ratio = normalized_single_difference(
+                    stack, _annulus(s.shape, *ip_frame_annulus))
+                d = d - ratio * s
             diffs.append(d)
             sums.append(s)
     if not diffs:

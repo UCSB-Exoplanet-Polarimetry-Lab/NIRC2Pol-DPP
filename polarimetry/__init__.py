@@ -7,6 +7,7 @@ from .stokes import (
     build_stokes_cubes,
     double_difference,
     median_stokes_cube,
+    normalized_single_difference,
     polarization_products,
     radial_stokes,
     rotate_qu,
@@ -24,8 +25,7 @@ from .instpol import (
     fit_ip_uphi,
     mean_ip,
     measure_ip_annulus,
-    measure_ip_edge,
-    measure_ip_frame,
+    measure_ip_cycle,
     subtract_ip,
 )
 from .fast_axis import (
