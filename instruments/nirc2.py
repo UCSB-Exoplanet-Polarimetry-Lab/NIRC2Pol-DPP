@@ -474,14 +474,18 @@ class NIRC2PolarimetryData(PolarimetryData):
         replace this once calibrated (see polarimetry/mueller.py).
         """
         if fast_axis_offset is None:
+            # Only warn when the caller did not say: passing 0.0 explicitly
+            # is a legitimate request, and polarimetry.fast_axis does exactly
+            # that to evaluate the rotation at zero offset before scanning.
             fast_axis_offset = self.fast_axis_offset
-
-        if fast_axis_offset == 0.0 and not type(self)._warned_uncalibrated_offset:
-            type(self)._warned_uncalibrated_offset = True
-            log.warning(
-                "Fast axis offset is still the uncalibrated default (0 deg), "
-                "so Q/U are not rotated into the sky frame correctly. "
-                "Determine theta_off on sky and pass it explicitly.")
+            if (fast_axis_offset == 0.0
+                    and not type(self)._warned_uncalibrated_offset):
+                type(self)._warned_uncalibrated_offset = True
+                log.warning(
+                    "Fast axis offset is still the uncalibrated default "
+                    "(0 deg), so Q/U are not rotated into the sky frame "
+                    "correctly. Determine theta_off on sky and pass it "
+                    "explicitly.")
 
         parang = header["PARANG"]
         if parang < 0:

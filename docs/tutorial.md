@@ -132,9 +132,23 @@ SAMPMODE, READS`, plus `FILTER` for flats); each group is median-combined,
 sigma-clipped, cleaned with the detector bad-pixel mask, and stamped with
 bookkeeping keywords (`NFRAMES`, `MAMEDIAN`, `FLATTYPE`, ...).
 
-Flats are dark-subtracted and normalized to a median of 1. If several kinds
-of flats exist they are ranked (sky > lamp > regular, darkless variants
-last) so the best match is always found first.
+Flats are dark-subtracted and normalized to a median of 1.
+
+**The kind of flat is a requirement, not a preference.** L' and M must use
+sky flats — the dome lamp is swamped by thermal background there — and JHK
+must use lamp flats. Reducing with the wrong kind gives a wrong answer that
+still looks plausible, so `find_closest_flat` raises rather than
+substituting. Pass `required_flat_type="SKY"` to override the band default
+(some observers want skies in JHK too), or
+`allow_flat_type_mismatch=True` to proceed anyway, which records `FLATMISM`
+in the header.
+
+Lamp-*off* flats are not used at all: they are meaningless in JHK, and at L'
+sky flats are used regardless, so a lamp flat is simply the lamp-on frames
+minus the matched dark.
+
+Among *valid* flats there is still an ordering — polarimetric (critical-angle)
+sets first, then dark-subtracted before darkless, then the most frames.
 
 ```python
 bad_pixel_mask = instrument.bad_pixel_mask()   # static NIRC2 mask
@@ -331,26 +345,120 @@ Frame(np.stack([q_phi, u_phi]), header).save("tutorial_qphi_uphi.fits")
 print("saved tutorial_median_stokes.fits, tutorial_qphi_uphi.fits")
 ```
 
-## 8. Optional: the temporary empirical correction
+## 8. Instrumental polarization
 
-Until the full Mueller matrix model is available, residual beam misalignment
-and instrumental-polarization leakage (I → Q/U crosstalk) can be fit per
-cycle by minimizing U_phi — `fit_empirical_cycle_correction` /
-`build_corrected_stokes_cube` in `polarimetry/mueller.py`. This is **loudly
-marked TEMPORARY**: it assumes an azimuthally-polarized target, it is slow
-(a 16-parameter search per cycle), the fast axis offset stays fixed, and it
-will be deleted when the Mueller model lands. Use it knowingly:
+Instrumental polarization (IP) is the I → Q/U crosstalk that leaks a
+fraction of the total intensity into the polarized channels: an unpolarized
+source comes out with `Q = ipq * I`, `U = ipu * I`. It is a property of the
+optical train, not the sky, and on NIRC2 it runs of order 1–2 %.
+
+Two ways to measure it, because neither works everywhere.
+
+**Minimizing U_phi** (`fit_ip_uphi`) needs a bright, azimuthally polarized
+source — a disk. All the real signal belongs in Q_phi, so the (ipq, ipu)
+that minimize the U_phi residual estimate the leakage.
 
 ```python
-from polarimetry import fit_empirical_cycle_correction, build_corrected_stokes_cube
+from polarimetry import fit_ip_uphi, mean_ip
 
-corrections = [fit_empirical_cycle_correction(instrument, c, theta_off,
-                                              crop_size=400, maxfev=2500)
-               for c in cycles]
-corr_cubes = [build_corrected_stokes_cube(instrument, c, corr, theta_off,
-                                          crop_size=400)
-              for c, corr in zip(cycles, corrections)]
+ips = [fit_ip_uphi(instrument, c, theta_off, mask_radius=22, crop_size=400)
+       for c in cycles]
+ip = mean_ip(ips)          # the scatter across cycles is the error bar
+print(ip.describe())
 ```
+
+On the AB Aur commissioning data this gives **ipq = −1.11 ± 0.44 %**,
+reproducing the −1.2 % measured previously by a different route. Note the
+error bar: three of its eight cycles have U_phi residuals five times the
+rest and return nonsense (one gives ipq = −4.1 %). The per-cycle
+`diagnostics["uphi_std_final"]` is a usable quality flag — cycles where it
+barely improves are worth dropping.
+
+**The mask edge** (`measure_ip_cycle`) needs high-contrast data instead. Just
+outside an occulting mask the light is the star's own PSF, assumed
+intrinsically unpolarized, so the normalized Stokes there measure the
+leakage directly. The annulus defaults to the coronagraph size, which the
+instrument reads from `SLITNAME`:
+
+```python
+from polarimetry import measure_ip_cycle
+
+ips = [measure_ip_cycle(instrument, c) for c in cycles]   # radii from the mask
+```
+
+DoAr 44 behind corona150 gives a 7.5–15 px annulus and **1.85 % at 127°**;
+HD 377 behind corona400 gives 20–40 px and **0.92 % at 11°**. Both were
+taken in H a week apart, so treat that difference as a caution rather than a
+measurement: the annulus sits close in, where a real disk or coronagraph
+residuals can violate the unpolarized assumption.
+
+Either way, apply it through `build_stokes_cubes`:
+
+```python
+cubes = build_stokes_cubes(instrument, cycles,
+                           fast_axis_offset=theta_off, ip=ip)
+```
+
+**The correction has to happen in the instrument frame**, before Q/U are
+rotated to sky — which is why it is an argument to the cube builder rather
+than something you subtract from a finished product. Subtracting `ipq * I`
+from a sky-frame Q is only correct if the leakage vector is rotated too.
+
+`ip_frame_annulus=(r_in, r_out)` instead removes a leakage measured
+per *exposure* rather than per cycle, which catches variation within a
+cycle. It is noisier; check it is needed before switching it on.
+
+`polarimetry/mueller.py` still holds `fit_empirical_cycle_correction`, the
+older 16-parameter fit of beam shifts *and* IP together. Prefer `fit_ip_uphi`
+unless residual beam misalignment is the actual problem; both are stopgaps
+until the Mueller matrix model lands.
+
+## 8a. Fast axis offset, on sky
+
+There is no calibration log for θ_off, and there is no lamp-ladder route to
+one. Fitting `A cos(4(θ − θ_fit))` to an HWP ladder returns
+
+    θ_fit = θ_off + χ/2
+
+where χ is the incident polarization angle in the instrument frame. The
+phase is degenerate between the offset and the source's own angle, and for
+an internal source χ is unknown — so every ladder-derived value carries an
+unknown error.
+
+On sky the missing ingredient comes from geometry. A disk's scattered light
+is polarized tangentially, so its angle is fixed by position, and a wrong
+θ_off shows up as the four-lobe butterfly being rotated:
+
+```python
+from polarimetry import butterfly_phase, fit_fast_axis_on_sky, scan_fast_axis_offset
+from polarimetry.fast_axis import prepare_cycles
+
+res = fit_fast_axis_on_sky(instrument, cycles, r_inner=25, r_outer=150)
+print(res.describe())
+
+# and check it is a real minimum rather than trusting one number
+prepared = prepare_cycles(instrument, cycles)
+offsets, scores = scan_fast_axis_offset(prepared, r_inner=25, r_outer=150)
+```
+
+`butterfly_phase(Q, U)` is the primitive underneath: give it any Q/U pair and
+it returns how far the pattern is turned, in degrees. Divide by 4 to get an
+offset — `theta_rot` carries `4 * theta_off`, so one degree of offset turns
+the polarization frame by four.
+
+On AB Aur all three routes agree: **−12.97°** fitting the offset alone,
+**−12.85°** fitting it jointly with the IP, and a scan minimum at
+**−13.00°**. The retired lamp-ladder value for that night was −8.18°. The
+disagreement is the point rather than a problem — it is roughly the size of
+the unmodelled rotation seen on this data before, and χ/2 is exactly the
+kind of constant offset that would produce it.
+
+Fit the IP jointly (the default): the two are degenerate, since a constant
+leakage tilts the integrated radial Stokes just as a frame rotation does.
+
+**This assumes the source is azimuthally polarized.** On an AGN, a merger or
+a star field these routines will happily rotate a genuine U_phi signal into
+Q_phi and report a confident number.
 
 ## 8b. Writing products, and reading their provenance
 
@@ -474,7 +582,10 @@ parameter.
 | HWP cycles | `instrument.match_modulator_cycles(frames)` |
 | Stokes cubes | `polarimetry.build_stokes_cubes` |
 | combine + products | `polarimetry.median_stokes_cube / polarization_products / radial_stokes` |
-| temporary IP correction | `polarimetry.fit_empirical_cycle_correction` (TEMPORARY) |
+| instrumental polarization | `polarimetry.fit_ip_uphi / measure_ip_cycle / measure_ip_annulus / subtract_ip` |
+| fast axis, on sky | `polarimetry.fit_fast_axis_on_sky / butterfly_phase / scan_fast_axis_offset` |
+| older joint beam-shift + IP fit | `polarimetry.fit_empirical_cycle_correction` (TEMPORARY) |
+| exclude bad frames | `utils.load_rejects / record_reject` |
 | write products | `polarimetry.ProductWriter(output_dir, target=...)` |
 | read provenance | `utils.provenance.describe(frame)` |
 
