@@ -42,39 +42,85 @@ class SyntheticPolarimetryData(PolarimetryData):
     background_method = None      # synthetic frames carry no pedestal
 
     def bad_pixel_mask(self):
+        """No bad pixels: the synthetic detector is perfect."""
         return np.zeros((2 * NY, NX), dtype=bool)
 
     def gain(self, header):
+        """Unit gain, so counts and electrons are the same number."""
         return 1.0
 
     def saturation_limit(self, header):
+        """Effectively infinite; nothing here saturates."""
         return 1e12
 
     def sort_frames(self, filenames, **kwargs):
+        """Everything is science; the synthetic night has no cals."""
         return {"sci": list(filenames), "darks": [], "flats": [],
                 "flats_sky": [], "flats_lampon": []}
 
     def north_angle(self, header):
+        """North angle from the header's ``NORTH`` key, 0 by default."""
         return float(header.get("NORTH", 0.0))
 
     def split_beams(self, frame):
+        """Split the stacked frame into its two beams.
+
+        Parameters
+        ----------
+        frame : Frame or array_like
+            Frame whose data holds the bottom beam above the top.
+
+        Returns
+        -------
+        ndarray
+            ``(2, ny, nx)``, beam 0 bottom and beam 1 top.
+        """
         data = frame.data if hasattr(frame, "data") else np.asarray(frame)
         return np.stack([data[:NY], data[NY:]])
 
     def qu_rotation_angle(self, header, fast_axis_offset=0.0):
-        """Same shape as the NIRC2 model, so the factor of 4 is exercised."""
+        """Same shape as the NIRC2 model, so the factor of 4 is exercised.
+
+        Parameters
+        ----------
+        header : dict
+            Header with PARANG, EL and ROT.
+        fast_axis_offset : float, optional
+            theta_off in degrees.
+
+        Returns
+        -------
+        float
+            theta_rot in degrees.
+        """
         if fast_axis_offset is None:
             fast_axis_offset = self.fast_axis_offset
         return (-2.0 * header["PARANG"] + 2.0 * header["EL"]
                 + 2.0 * header["ROT"] + 4.0 * fast_axis_offset)
 
     def occulting_radius(self, header):
+        """Mask radius from the header's ``OCCRAD`` key."""
         return header.get("OCCRAD")
 
 
 def disk_radial_stokes(shape=(NY, NX), r_inner=12.0, r_outer=34.0,
                        amplitude=1.0):
-    """``(Q_phi, U_phi, I)`` for a tangentially polarized annular disk."""
+    """``(Q_phi, U_phi, I)`` for a tangentially polarized annular disk.
+
+    Parameters
+    ----------
+    shape : tuple of int, optional
+        ``(ny, nx)`` of the frame.
+    r_inner, r_outer : float, optional
+        Disk annulus in pixels.
+    amplitude : float, optional
+        Q_phi amplitude; 0 makes an unpolarized source.
+
+    Returns
+    -------
+    q_phi, u_phi, I, phi : ndarray
+        Radial Stokes, intensity and azimuth.
+    """
     ny, nx = shape
     cy, cx = (ny - 1) / 2.0, (nx - 1) / 2.0
     yy, xx = np.mgrid[:ny, :nx]
@@ -92,7 +138,30 @@ def disk_radial_stokes(shape=(NY, NX), r_inner=12.0, r_outer=34.0,
 
 def synth_cycle(theta_off, ipq=0.0, ipu=0.0, parang=0.0, el=45.0, rot=0.0,
                 north=0.0, amplitude=1.0, seed=None, noise=0.0):
-    """One HWP cycle of four synthetic frames with known truth."""
+    """One HWP cycle of four synthetic frames with known truth.
+
+    Parameters
+    ----------
+    theta_off : float
+        Fast axis offset to inject, in degrees.
+    ipq, ipu : float, optional
+        Instrumental leakage to inject.
+    parang, el, rot : float, optional
+        Pointing for the cycle's headers.
+    north : float, optional
+        North angle.
+    amplitude : float, optional
+        Disk brightness; 0 gives an unpolarized source.
+    seed : int, optional
+        Noise seed.
+    noise : float, optional
+        Gaussian noise added to the single differences.
+
+    Returns
+    -------
+    list of Frame
+        Four frames, one per critical angle.
+    """
     q_phi, u_phi, I, phi = disk_radial_stokes(amplitude=amplitude)
 
     # radial -> sky Q/U (inverse of SPIE Eq. 6)
@@ -128,6 +197,7 @@ def synth_cycle(theta_off, ipq=0.0, ipu=0.0, parang=0.0, el=45.0, rot=0.0,
 
 @pytest.fixture
 def instrument():
+    """The synthetic instrument, as a fixture."""
     return SyntheticPolarimetryData()
 
 
@@ -194,6 +264,7 @@ class SmallNIRC2(NIRC2PolarimetryData):
     background_method = None
 
     def bad_pixel_mask(self):
+        """No bad pixels: the synthetic detector is perfect."""
         return np.zeros((E2E_NY, E2E_NX), dtype=bool)
 
 
@@ -208,7 +279,22 @@ def _e2e_flat_response():
 
 
 def _e2e_beam_signal(theta_off, ipq, ipu, parang, el, rot, hwp_index):
-    """True (dark- and flat-free) detector signal for one exposure."""
+    """True (dark- and flat-free) detector signal for one exposure.
+
+    Parameters
+    ----------
+    theta_off, ipq, ipu : float
+        Injected calibration truth.
+    parang, el, rot : float
+        Pointing.
+    hwp_index : int
+        Which critical angle this exposure sits at.
+
+    Returns
+    -------
+    ndarray
+        The true detector signal, before flat and dark are applied.
+    """
     q_phi, u_phi, I, phi = disk_radial_stokes(
         shape=(E2E_BEAM_HEIGHT, E2E_NX - E2E_XOFF), r_inner=6.0, r_outer=18.0)
 
@@ -230,7 +316,24 @@ def _e2e_beam_signal(theta_off, ipq, ipu, parang, el, rot, hwp_index):
 
 
 def _e2e_header(obj, shutter, el, **extra):
-    """NIRC2-shaped header, complete enough for sort_frames to classify."""
+    """NIRC2-shaped header, complete enough for sort_frames to classify.
+
+    Parameters
+    ----------
+    obj : str
+        OBJECT value.
+    shutter : str
+        SHRNAME value, ``"open"`` or ``"closed"``.
+    el : float
+        Elevation, which decides flat classification.
+    **extra
+        Additional keywords.
+
+    Returns
+    -------
+    dict
+        A NIRC2-shaped header.
+    """
     header = {
         "FILENAME": "synthetic.fits", "FILTER": "Kp + Wollaston",
         "FWINAME": "Kp", "ITIME": 30.0, "COADDS": 1,
@@ -261,6 +364,20 @@ def synthetic_night(tmp_path):
     n = 0
 
     def write(data, header):
+        """Write one frame into the night's raw folder.
+
+        Parameters
+        ----------
+        data : ndarray
+            Image data.
+        header : dict
+            Header, extended with a running ``FRAMENO`` and ``FILENAME``.
+
+        Returns
+        -------
+        str
+            Path written.
+        """
         nonlocal n
         n += 1
         header = dict(header, FRAMENO=n, FILENAME=f"n{n:04d}.fits")

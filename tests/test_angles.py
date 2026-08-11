@@ -20,6 +20,7 @@ def test_angles_match_across_the_wrap():
 
 
 def test_angles_match_respects_the_tolerance():
+    """``atol`` bounds the match, and is honoured in both directions."""
     assert angles_match(0.0, 0.9, atol=1.0)
     assert not angles_match(0.0, 1.1, atol=1.0)
     assert angles_match(0.0, 5.0, atol=6.0)
@@ -32,11 +33,13 @@ def test_angles_match_period_180_folds_orthogonal_angles():
 
 
 def test_angles_match_full_circle_period():
+    """With period 360, angles a half turn apart no longer match."""
     assert not angles_match(45.0, 225.0, period=360.0)
     assert angles_match(45.0, 405.0, period=360.0)
 
 
 def test_is_critical_angle():
+    """Critical angles are recognised through the wrap; other angles are not."""
     critical = (0.0, 45.0, 22.5, 67.5)
     assert is_critical_angle(-0.002, critical)
     assert is_critical_angle(67.502, critical)
@@ -64,11 +67,13 @@ def test_mean_angle_stays_near_the_first_angle():
 
 
 def test_mean_angle_simple_cases():
+    """Away from any wrap, the circular mean is the arithmetic one."""
     assert mean_angle([10.0, 20.0, 30.0]) == pytest.approx(20.0, abs=1e-9)
     assert mean_angle([42.0]) == pytest.approx(42.0)
 
 
 def test_mean_angle_empty_is_nan():
+    """An empty input gives NaN rather than raising."""
     assert np.isnan(mean_angle([]))
 
 

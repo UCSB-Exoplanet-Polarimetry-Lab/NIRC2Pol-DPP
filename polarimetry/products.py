@@ -112,7 +112,20 @@ class ProductWriter:
     # -- intermediate products --------------------------------------------
 
     def save_reduced(self, frames, subdir=None):
-        """Write dark-subtracted / flat-fielded science frames."""
+        """Write dark-subtracted / flat-fielded science frames.
+
+        Parameters
+        ----------
+        frames : iterable of Frame
+            Reduced science frames.
+        subdir : str, optional
+            Subdirectory to write into.
+
+        Returns
+        -------
+        list of str
+            Paths written.
+        """
         folder = os.path.join(self.output_dir,
                               subdir or f"{self.target}_reduced")
         os.makedirs(folder, exist_ok=True)
@@ -128,9 +141,26 @@ class ProductWriter:
     def save_stokes_cycles(self, cubes, cycles=None, header=None, **params):
         """Write the per-HWP-cycle Stokes cubes.
 
-        ``cubes`` is ``(ncycles, 3, ny, nx)``. Each cycle's own header (from
-        its first frame, if ``cycles`` is given) is preserved in the
-        per-cycle files, with the cycle index recorded.
+                ``cubes`` is ``(ncycles, 3, ny, nx)``. Each cycle's own header (from
+                its first frame, if ``cycles`` is given) is preserved in the
+                per-cycle files, with the cycle index recorded.
+
+        Parameters
+        ----------
+        cubes : ndarray
+            ``(ncycles, 3, ny, nx)`` per-cycle cubes.
+        cycles : list of list of Frame, optional
+            The cycles they came from, used for per-file headers.
+        header : Header, optional
+            Header carried onto the products.
+        **params
+            Extra provenance parameters.
+
+        Returns
+        -------
+        str
+            Path of the stacked cube. Per-cycle files are written beside it when
+            ``save_cycle_files`` is set.
         """
         cubes = np.asarray(cubes)
         base = header if header is not None else (
@@ -165,13 +195,45 @@ class ProductWriter:
     # -- final products ----------------------------------------------------
 
     def save_median_stokes(self, cube, header=None, **params):
-        """Write the median-combined [I, Q, U] Stokes cube."""
+        """Write the median-combined [I, Q, U] Stokes cube.
+
+        Parameters
+        ----------
+        cube : ndarray
+            ``(3, ny, nx)`` median-combined cube.
+        header : Header, optional
+            Header carried onto the product.
+        **params
+            Extra provenance parameters.
+
+        Returns
+        -------
+        str
+            Path written.
+        """
         return self._save(np.asarray(cube), header, "median_stokes",
                           step="median-combined Stokes cube", **params)
 
     def save_derived_products(self, cube, header=None, center=None, **params):
         """Write PI, AoLP, DoLP and the radial Stokes images derived from a
-        ``(3, ny, nx)`` Stokes cube."""
+                ``(3, ny, nx)`` Stokes cube.
+
+        Parameters
+        ----------
+        cube : ndarray
+            ``(3, ny, nx)`` Stokes cube.
+        header : Header, optional
+            Header carried onto the products.
+        center : tuple of float, optional
+            Centre for the radial Stokes.
+        **params
+            Extra provenance parameters.
+
+        Returns
+        -------
+        list of str
+            Paths written.
+        """
         from .stokes import polarization_products, radial_stokes
 
         cube = np.asarray(cube)

@@ -104,7 +104,28 @@ class RotationApproximationModel(MuellerMatrixModel):
 def _registered_stacks(instrument, cycle, critical_angles, atol,
                        register_method, crop_size):
     """One mean registered beam stack per critical angle, optionally cropped
-    around the star (which registration puts at the stack center)."""
+        around the star (which registration puts at the stack center).
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Instrument supplying beam splitting.
+    cycle : list of Frame
+        One HWP cycle.
+    critical_angles : tuple of float
+        The modulation angles.
+    atol : float
+        Tolerance when matching them.
+    register_method : str or None
+        Centering algorithm; None to skip.
+    crop_size : int or None
+        Central crop applied to each stack.
+
+    Returns
+    -------
+    list of ndarray
+        One mean ``(2, ny, nx)`` beam stack per critical angle.
+    """
     from reduction.registration import register_beam_stack
     from utils.imutils import crop
 
@@ -132,7 +153,24 @@ def _registered_stacks(instrument, cycle, critical_angles, atol,
 
 def _corrected_qu(stacks, oe_shifts, frame_shifts, ipq, ipu):
     """Assemble Q, U, I from the four per-angle beam stacks with residual
-    beam shifts, frame-to-frame shifts, and IP leakage subtraction."""
+        beam shifts, frame-to-frame shifts, and IP leakage subtraction.
+
+    Parameters
+    ----------
+    stacks : list of ndarray
+        Per-angle beam stacks.
+    oe_shifts : ndarray
+        ``(4, 2)`` bottom-beam shifts.
+    frame_shifts : ndarray
+        ``(3, 2)`` shifts of frames 2-4.
+    ipq, ipu : float
+        Leakage terms.
+
+    Returns
+    -------
+    tuple of ndarray
+        ``(Q, U, I)`` in the instrument frame.
+    """
     from utils.imutils import translate
 
     diffs, sums = [], []
@@ -258,9 +296,36 @@ def build_corrected_stokes_cube(instrument, cycle, correction,
                                 register_method="smooth_peak",
                                 derotate=True):
     """TEMPORARY: build a ``(3, ny, nx)`` Stokes cube [I, Q', U'] applying
-    a fitted empirical correction (see
-    :func:`fit_empirical_cycle_correction`). Use the same ``crop_size`` /
-    ``register_method`` as the fit."""
+        a fitted empirical correction (see
+        :func:`fit_empirical_cycle_correction`). Use the same ``crop_size`` /
+        ``register_method`` as the fit.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Instrument to reduce with.
+    cycle : list of Frame
+        One HWP cycle.
+    correction : dict
+        Result of :func:`fit_empirical_cycle_correction`.
+    fast_axis_offset : float
+        theta_off in degrees.
+    crop_size : int, optional
+        Central crop.
+    critical_angles : tuple of float, optional
+        The modulation angles.
+    atol : float, optional
+        Tolerance when matching them.
+    register_method : str, optional
+        Centering algorithm.
+    derotate : bool, optional
+        Rotate to north-up.
+
+    Returns
+    -------
+    ndarray
+        ``(3, ny, nx)`` cube of ``[I, Q, U]``.
+    """
     from utils.imutils import rotate_image_center
 
     from .stokes import CRITICAL_ANGLES, rotate_qu

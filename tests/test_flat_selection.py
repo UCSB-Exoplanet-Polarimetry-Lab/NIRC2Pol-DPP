@@ -14,6 +14,13 @@ from utils.frame import Frame
 
 def _flat(filtername="Kp + Wollaston", band="Kp", flattype="LAMP", n=64,
           nframes=3, polflat=False):
+    """A master flat with the given filter, band and type.
+
+    Returns
+    -------
+    Frame
+        The synthetic flat, carrying the header keywords the matcher reads.
+    """
     return Frame(np.ones((n, n)),
                  {"FILTER": filtername, "FWINAME": band, "NAXIS1": n,
                   "NAXIS2": n, "FLATTYPE": flattype, "NFRAMES": nframes,
@@ -21,6 +28,13 @@ def _flat(filtername="Kp + Wollaston", band="Kp", flattype="LAMP", n=64,
 
 
 def _science(filtername="Kp + Wollaston", band="Kp", n=64):
+    """A science frame needing a flat.
+
+    Returns
+    -------
+    Frame
+        The synthetic frame.
+    """
     return Frame(np.ones((n, n)),
                  {"FILTER": filtername, "FWINAME": band, "NAXIS1": n,
                   "NAXIS2": n, "FILENAME": "sci.fits"})
@@ -48,18 +62,21 @@ def test_required_flat_type_override_wins():
 # --- the requirement is enforced, not merely preferred -----------------
 
 def test_wrong_flat_type_raises():
+    """An L' frame offered only a lamp flat refuses to reduce."""
     with pytest.raises(ValueError, match="requires a SKY flat"):
         find_closest_flat(_science("Lp + Wollaston", "Lp"),
                           [_flat("Lp + Wollaston", "Lp", "LAMP")])
 
 
 def test_right_flat_type_is_accepted():
+    """An L' frame takes a sky flat without complaint."""
     _, got = find_closest_flat(_science("Lp + Wollaston", "Lp"),
                                [_flat("Lp + Wollaston", "Lp", "SKY")])
     assert got is not None and got["FLATTYPE"] == "SKY"
 
 
 def test_override_downgrades_the_error_and_is_recorded():
+    """The override proceeds and records FLATMISM, so it stays auditable."""
     _, got = find_closest_flat(_science("Lp + Wollaston", "Lp"),
                                [_flat("Lp + Wollaston", "Lp", "LAMP")],
                                allow_flat_type_mismatch=True)
@@ -68,6 +85,7 @@ def test_override_downgrades_the_error_and_is_recorded():
 
 
 def test_explicit_required_type_overrides_the_band_rule():
+    """An explicit required type wins over the band default."""
     _, got = find_closest_flat(_science("Lp + Wollaston", "Lp"),
                                [_flat("Lp + Wollaston", "Lp", "LAMP")],
                                required_flat_type="LAMP")
@@ -77,6 +95,7 @@ def test_explicit_required_type_overrides_the_band_rule():
 # --- the filter must match; size and exposure are not the same ---------
 
 def test_filter_must_match():
+    """A flat in the wrong filter is never used, whatever else matches."""
     _, got = find_closest_flat(_science("Kp + Wollaston", "Kp"),
                                [_flat("H + Wollaston", "H", "LAMP")])
     assert got is None, "a flat in the wrong filter describes the wrong "\
@@ -94,6 +113,7 @@ def test_exposure_settings_are_ignored():
 
 
 def test_larger_flat_is_trimmed():
+    """A full-frame flat is cropped to a subarray frame and marked FLATTRIM."""
     _, got = find_closest_flat(_science(n=32), [_flat(n=64)])
     assert got is not None
     assert got.shape == (32, 32)
@@ -101,6 +121,7 @@ def test_larger_flat_is_trimmed():
 
 
 def test_smaller_flat_is_refused():
+    """A flat smaller than the frame cannot cover it, so it is refused."""
     _, got = find_closest_flat(_science(n=64), [_flat(n=32)])
     assert got is None, "a flat smaller than the frame cannot calibrate it"
 

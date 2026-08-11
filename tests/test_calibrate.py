@@ -11,11 +11,25 @@ from utils.imutils import plus_mask
 
 
 def _smooth_field(n=32):
+    """A smooth linear background, so an interpolated pixel has
+    a predictable right answer.
+
+    Parameters
+    ----------
+    n : int
+        Side of the square image.
+
+    Returns
+    -------
+    ndarray
+        The field.
+    """
     yy, xx = np.mgrid[:n, :n]
     return 100.0 + 0.5 * xx + 0.25 * yy
 
 
 def test_interpolate_replaces_an_isolated_hot_pixel():
+    """A single hot pixel is replaced by roughly its neighbours' value."""
     data = _smooth_field()
     expected = data[16, 16]
     data[16, 16] = 1e6
@@ -45,6 +59,7 @@ def test_interpolate_handles_a_cluster_without_raising():
 
 
 def test_median_replacement_is_an_alternative_route():
+    """The median replacement path reaches the same answer as interpolation."""
     data = _smooth_field()
     expected = data[10, 10]
     data[10, 10] = -9999.0
@@ -56,6 +71,7 @@ def test_median_replacement_is_an_alternative_route():
 
 
 def test_interpolate_bad_pixels_whole_frame():
+    """The whole-frame entry point fills a NaN from its surroundings."""
     data = _smooth_field(16)
     expected = data[8, 8]
     data[8, 8] = np.nan
@@ -85,12 +101,29 @@ def test_plus_mask_grows_along_the_cross():
 
 
 def _dark(itime, coadds=1, n=16):
+    """A dark frame with given exposure settings.
+
+    Parameters
+    ----------
+    itime : float
+        Exposure time.
+    coadds : int, optional
+        Coadds.
+    n : int, optional
+        Detector size.
+
+    Returns
+    -------
+    Frame
+        The synthetic dark.
+    """
     return Frame(np.zeros((n, n)),
                  {"NAXIS1": n, "NAXIS2": n, "ITIME": itime, "COADDS": coadds,
                   "SAMPMODE": 3, "READS": 1})
 
 
 def test_find_closest_dark_matches_exposure():
+    """The dark with the matching ITIME is chosen over the others."""
     frame = _dark(30.0)
     darks = [_dark(10.0), _dark(30.0), _dark(60.0)]
     _, got = find_closest_dark(frame, darks)
@@ -110,5 +143,6 @@ def test_find_closest_dark_crops_an_oversized_dark():
 
 
 def test_find_closest_dark_returns_none_with_no_darks():
+    """An empty candidate list gives None rather than raising."""
     _, got = find_closest_dark(_dark(30.0), [])
     assert got is None

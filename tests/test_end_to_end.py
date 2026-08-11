@@ -32,6 +32,18 @@ from utils.provenance import describe
 
 
 def _disk_annulus(shape):
+    """Boolean mask of the injected disk's annulus.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        ``(ny, nx)`` of the frame.
+
+    Returns
+    -------
+    ndarray of bool
+        True where the disk signal lives.
+    """
     ny, nx = shape
     yy, xx = np.mgrid[:ny, :nx]
     r = np.hypot(yy - (ny - 1) / 2, xx - (nx - 1) / 2)
@@ -199,6 +211,7 @@ def test_ip_must_be_removed_before_the_sky_rotation(synthetic_night):
     _, u_wrong = radial_stokes(wrong_q, wrong_u)
 
     def rms(a):
+        """Root-mean-square of an array over the disk annulus."""
         return float(np.sqrt(np.nanmean(a[ring] ** 2)))
 
     # U_phi is the null channel: doing it right leaves less in it.
@@ -225,9 +238,11 @@ def test_orchestrator_matches_the_function_chain(synthetic_night):
         derotate=False))
 
     def step_sort(ctx):
+        """Pipeline step: classify the raw files."""
         return ctx["instrument"].sort_frames(files)
 
     def step_masters(ctx):
+        """Pipeline step: build master darks, flats and the mask."""
         bpm = ctx["instrument"].bad_pixel_mask()
         darks, dmask = make_master_darks(
             load_frames(ctx["sort"]["darks"]), bad_pixel_mask=bpm)
@@ -240,6 +255,7 @@ def test_orchestrator_matches_the_function_chain(synthetic_night):
                 "masks": make_master_masks(dmask, fmask)}
 
     def step_reduce(ctx):
+        """Pipeline step: dark-subtract and flat-divide the science."""
         m = ctx["masters"]
         return [reduce_frame(f, m["flats"], m["darks"], None, m["masks"],
                              bad_pixel_mask=ctx["instrument"].bad_pixel_mask(),
@@ -247,9 +263,11 @@ def test_orchestrator_matches_the_function_chain(synthetic_night):
                 for f in load_frames(ctx["sort"]["sci"])]
 
     def step_cycles(ctx):
+        """Pipeline step: group reduced frames into HWP cycles."""
         return ctx["instrument"].match_modulator_cycles(ctx["reduce"])
 
     def step_stokes(ctx):
+        """Pipeline step: build and median-combine the Stokes cubes."""
         return median_stokes_cube(build_stokes_cubes(
             ctx["instrument"], ctx["cycles"],
             fast_axis_offset=truth["theta_off"], register_method=None,

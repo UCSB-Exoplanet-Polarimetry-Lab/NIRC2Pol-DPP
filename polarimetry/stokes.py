@@ -80,7 +80,20 @@ def normalized_single_difference(beam_stack, mask=None):
 
 def _angles_match(a, b, atol):
     """Circular comparison of modulator angles modulo 180 deg (so -0.002
-    matches 0, and 179.9 matches 0)."""
+        matches 0, and 179.9 matches 0).
+
+    Parameters
+    ----------
+    a, b : float
+        Modulator angles in degrees.
+    atol : float
+        Tolerance in degrees.
+
+    Returns
+    -------
+    bool
+        True if they match modulo 180 deg.
+    """
     from utils.angles import angles_match
 
     return angles_match(a, b, atol)
@@ -89,14 +102,42 @@ def _angles_match(a, b, atol):
 def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
                          register_kwargs=None, ip_frame_annulus=None):
     """Mean single difference and sum of all frames in the cycle whose
-    modulator angle matches ``angle``. Each frame's beam stack is centered
-    on the star first (unless ``register_method`` is None), so frames can
-    be combined and differenced across the cycle.
+        modulator angle matches ``angle``. Each frame's beam stack is centered
+        on the star first (unless ``register_method`` is None), so frames can
+        be combined and differenced across the cycle.
 
-    With ``ip_frame_annulus = (r_inner, r_outer)`` each frame's own
-    instrumental leakage is measured in that annulus and removed from its
-    single difference before averaging, catching leakage that varies within
-    a cycle. See :func:`normalized_single_difference`."""
+        With ``ip_frame_annulus = (r_inner, r_outer)`` each frame's own
+        instrumental leakage is measured in that annulus and removed from its
+        single difference before averaging, catching leakage that varies within
+        a cycle. See :func:`normalized_single_difference`.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Instrument supplying beam splitting and the modulator angle.
+    cycle : list of Frame
+        Frames of one HWP cycle.
+    angle : float
+        Critical angle to select.
+    atol : float
+        Tolerance when matching that angle.
+    register_method : str or None
+        Centering algorithm; None to skip registration.
+    register_kwargs : dict, optional
+        Extra arguments for the centering algorithm.
+    ip_frame_annulus : tuple of float, optional
+        ``(r_inner, r_outer)`` for the per-exposure leakage removal.
+
+    Returns
+    -------
+    diff, sums : ndarray
+        Mean single difference and mean single sum over the matching frames.
+
+    Raises
+    ------
+    ValueError
+        If no frame in the cycle sits at this angle.
+    """
     from reduction.registration import register_beam_stack
 
     from .instpol import _annulus
@@ -191,8 +232,20 @@ def double_difference(instrument, cycle, critical_angles=CRITICAL_ANGLES,
 def rotate_qu(Q, U, theta_rot_deg):
     """Rotate measured Q/U into the sky frame by ``theta_rot`` [deg]::
 
-        Q' =  Q cos(theta_rot) + U sin(theta_rot)
-        U' = -Q sin(theta_rot) + U cos(theta_rot)
+            Q' =  Q cos(theta_rot) + U sin(theta_rot)
+            U' = -Q sin(theta_rot) + U cos(theta_rot)
+
+    Parameters
+    ----------
+    Q, U : ndarray
+        Instrument-frame Stokes planes.
+    theta_rot_deg : float
+        Rotation angle in degrees, from the instrument's rotation model.
+
+    Returns
+    -------
+    tuple of ndarray
+        ``(Q_sky, U_sky)``.
     """
     theta = np.radians(theta_rot_deg)
     q_sky = Q * np.cos(theta) + U * np.sin(theta)
@@ -207,10 +260,39 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
                       ip_frame_annulus=None):
     """Build one ``(3, ny, nx)`` Stokes cube [I, Q', U'] from one HWP cycle.
 
-    Splits and registers the beams, double-differences the cycle, rotates
-    Q/U to the sky frame using the cycle-averaged instrument rotation angle,
-    and (optionally) spatially derotates all three planes to north-up
-    east-left using the cycle-averaged north angle.
+        Splits and registers the beams, double-differences the cycle, rotates
+        Q/U to the sky frame using the cycle-averaged instrument rotation angle,
+        and (optionally) spatially derotates all three planes to north-up
+        east-left using the cycle-averaged north angle.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Instrument supplying beam geometry and the rotation model.
+    cycle : list of Frame
+        One complete HWP cycle.
+    fast_axis_offset : float, optional
+        theta_off in degrees. Measure it on sky; the 0 deg default is not a
+        calibration and warns once.
+    critical_angles : tuple of float, optional
+        The four modulation angles.
+    atol : float, optional
+        Tolerance when matching them.
+    register_method : str, optional
+        Centering algorithm; None to skip.
+    derotate : bool, optional
+        Rotate the planes to north-up east-left.
+    register_kwargs : dict, optional
+        Extra arguments for the centering algorithm.
+    ip : InstrumentalPolarization, optional
+        Leakage removed in the instrument frame.
+    ip_frame_annulus : tuple of float, optional
+        ``(r_inner, r_outer)`` for per-exposure leakage removal.
+
+    Returns
+    -------
+    ndarray
+        ``(3, ny, nx)`` cube of ``[I, Q, U]``.
     """
     Q, U, I = double_difference(instrument, cycle,
                                 critical_angles=critical_angles, atol=atol,
@@ -251,7 +333,24 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
 
 def build_stokes_cubes(instrument, cycles, fast_axis_offset=0.0, **kwargs):
     """Stokes cubes for every HWP cycle: returns a ``(ncycles, 3, ny, nx)``
-    array."""
+        array.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Instrument to reduce with.
+    cycles : list of list of Frame
+        The cycles to reduce.
+    fast_axis_offset : float, optional
+        theta_off in degrees.
+    **kwargs
+        Passed to :func:`build_stokes_cube`.
+
+    Returns
+    -------
+    ndarray
+        ``(ncycles, 3, ny, nx)``.
+    """
     cubes = [build_stokes_cube(instrument, cycle,
                                fast_axis_offset=fast_axis_offset, **kwargs)
              for cycle in cycles]
@@ -280,8 +379,22 @@ def polarization_products(stokes_cube):
 
 def azimuthal_angle(shape, center=None):
     """Azimuthal angle phi [rad] around ``center = (cy, cx)`` for each
-    pixel. Since only 2*phi enters the radial Stokes formulas, the choice of
-    reference axis (+x vs -x) does not matter."""
+        pixel. Since only 2*phi enters the radial Stokes formulas, the choice of
+        reference axis (+x vs -x) does not matter.
+
+    Parameters
+    ----------
+    shape : tuple of int
+        ``(ny, nx)`` of the grid.
+    center : tuple of float, optional
+        ``(cy, cx)``; defaults to the image centre.
+
+    Returns
+    -------
+    ndarray
+        Azimuth in radians at each pixel. Only ``2*phi`` enters the radial
+        Stokes definitions, so the choice of reference axis does not matter.
+    """
     ny, nx = shape
     if center is None:
         center = ((ny - 1) / 2, (nx - 1) / 2)
@@ -293,17 +406,31 @@ def azimuthal_angle(shape, center=None):
 def radial_stokes(Q, U, center=None):
     """Radial Stokes parameters (SPIE Eqs. 6-7)::
 
-        Q_phi =  Q cos(2 phi) + U sin(2 phi)
-        U_phi = -Q sin(2 phi) + U cos(2 phi)
+            Q_phi =  Q cos(2 phi) + U sin(2 phi)
+            U_phi = -Q sin(2 phi) + U cos(2 phi)
 
-    Disk signal is positive in Q_phi while U_phi contains noise. This sign
-    convention was verified empirically on the AB Aur commissioning data
-    (2025-12-07 L'): with these signs the tangentially-polarized disk comes
-    out positive, matching the notebook cell that produced the reference
-    qphi_median. (The IRDAP-style ``-Q cos - U sin`` form gives *negative*
-    disk signal for this instrument's image parity — don't "fix" the sign
-    without rechecking on sky.) ``center = (cy, cx)`` is the star position
-    (default: image center).
+        Disk signal is positive in Q_phi while U_phi contains noise. This sign
+        convention was verified empirically on the AB Aur commissioning data
+        (2025-12-07 L'): with these signs the tangentially-polarized disk comes
+        out positive, matching the notebook cell that produced the reference
+        qphi_median. (The IRDAP-style ``-Q cos - U sin`` form gives *negative*
+        disk signal for this instrument's image parity — don't "fix" the sign
+        without rechecking on sky.) ``center = (cy, cx)`` is the star position
+        (default: image center).
+
+    Parameters
+    ----------
+    Q, U : ndarray
+        Sky-frame Stokes planes.
+    center : tuple of float, optional
+        Centre of the azimuthal pattern -- the star. Defaults to the image
+        centre, which is right only if registration put the star there.
+
+    Returns
+    -------
+    tuple of ndarray
+        ``(Q_phi, U_phi)``. Tangential polarization gives positive Q_phi, and
+        U_phi is the null channel.
     """
     phi = azimuthal_angle(np.shape(Q), center=center)
     q_phi = Q * np.cos(2 * phi) + U * np.sin(2 * phi)

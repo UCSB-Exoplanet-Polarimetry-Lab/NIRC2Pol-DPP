@@ -138,7 +138,20 @@ class PreparedCycle:
 
     def sky_qu(self, theta_off, ip=None):
         """Rotate into the sky frame for a trial offset, removing ``ip``
-        first (in the instrument frame, where it belongs)."""
+                first (in the instrument frame, where it belongs).
+
+        Parameters
+        ----------
+        theta_off : float
+            Trial fast axis offset in degrees.
+        ip : InstrumentalPolarization, optional
+            Leakage removed before rotating.
+
+        Returns
+        -------
+        tuple of ndarray
+            ``(Q_sky, U_sky)`` for this cycle at that offset.
+        """
         from .instpol import subtract_ip
         from .stokes import rotate_qu
 
@@ -150,15 +163,31 @@ class PreparedCycle:
 def prepare_cycles(instrument, cycles, derotate=True, **dd_kwargs):
     """Reduce cycles to :class:`PreparedCycle` objects, theta_off still free.
 
-    Runs ``double_difference`` once per cycle and records the Q/U rotation
-    angle at ``theta_off = 0``. Spatial derotation is folded into that angle
-    rather than applied to pixels: rotating an image by an angle shifts every
-    azimuth by the same amount, and only ``2*phi + theta`` enters the radial
-    Stokes, so ``eff_rot = base_rot + 2*north`` is exactly equivalent and
-    costs no interpolation.
+        Runs ``double_difference`` once per cycle and records the Q/U rotation
+        angle at ``theta_off = 0``. Spatial derotation is folded into that angle
+        rather than applied to pixels: rotating an image by an angle shifts every
+        azimuth by the same amount, and only ``2*phi + theta`` enters the radial
+        Stokes, so ``eff_rot = base_rot + 2*north`` is exactly equivalent and
+        costs no interpolation.
 
-    ``**dd_kwargs`` are forwarded to ``double_difference``
-    (``register_method``, ``register_kwargs``, ``critical_angles``, ...).
+        ``**dd_kwargs`` are forwarded to ``double_difference``
+        (``register_method``, ``register_kwargs``, ``critical_angles``, ...).
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Instrument to reduce with.
+    cycles : list of list of Frame
+        Cycles to prepare.
+    derotate : bool, optional
+        Fold the north angle into the rotation, as the science reduction does.
+    **dd_kwargs
+        Passed to ``double_difference``.
+
+    Returns
+    -------
+    list of PreparedCycle
+        One per cycle, with theta_off still free.
     """
     from utils.angles import mean_angle
 

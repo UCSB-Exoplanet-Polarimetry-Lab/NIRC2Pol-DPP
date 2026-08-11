@@ -362,11 +362,29 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
 def mean_ip(ips, method=None):
     """Average a list of per-cycle measurements into one sequence value.
 
-    The scatter across cycles is the honest error bar on the mean, so it is
-    recorded in ``diagnostics`` as ``ipq_err`` / ``ipu_err`` (standard error
-    of the mean). If that scatter is comparable to the values themselves,
-    the leakage is not well measured and the correction should be treated
-    with suspicion rather than applied silently.
+        The scatter across cycles is the honest error bar on the mean, so it is
+        recorded in ``diagnostics`` as ``ipq_err`` / ``ipu_err`` (standard error
+        of the mean). If that scatter is comparable to the values themselves,
+        the leakage is not well measured and the correction should be treated
+        with suspicion rather than applied silently.
+
+    Parameters
+    ----------
+    ips : list of InstrumentalPolarization
+        Per-cycle measurements.
+    method : str, optional
+        Method recorded on the result; defaults to that of the first input.
+
+    Returns
+    -------
+    InstrumentalPolarization
+        The mean, scope ``"sequence"``, with ``ipq_err`` and ``ipu_err`` in
+        ``diagnostics``.
+
+    Raises
+    ------
+    ValueError
+        If ``ips`` is empty.
     """
     if not ips:
         raise ValueError("no measurements to average")

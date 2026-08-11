@@ -9,6 +9,7 @@ from utils.provenance import describe, record_step, steps_of
 
 
 def test_record_step_round_trips():
+    """A recorded step, with its parameters, reads back out of the header."""
     frame = Frame(np.zeros((4, 4)), {})
     record_step(frame, "dark/flat reduction", darksub=True, gain=8.0)
     steps = steps_of(frame)
@@ -18,6 +19,7 @@ def test_record_step_round_trips():
 
 
 def test_record_step_accumulates_in_order():
+    """Several steps accumulate in the order they were recorded."""
     frame = Frame(np.zeros((4, 4)), {})
     record_step(frame, "first")
     record_step(frame, "second")
@@ -46,12 +48,14 @@ def test_provenance_survives_a_fits_round_trip(tmp_path):
 
 
 def test_describe_is_readable_when_there_is_nothing():
+    """An unprocessed product still describes itself without raising."""
     assert isinstance(describe(Frame(np.zeros((2, 2)), {})), str)
 
 
 # --- rejects -----------------------------------------------------------
 
 def test_load_rejects_missing_file(tmp_path):
+    """A missing reject file gives an empty mapping, not an error."""
     assert load_rejects(str(tmp_path / "nope.toml")) == {}
 
 
@@ -63,12 +67,14 @@ def test_load_rejects_list_form(tmp_path):
 
 
 def test_load_rejects_table_form_keeps_reasons(tmp_path):
+    """The table form preserves why each frame was dropped."""
     f = tmp_path / "r.toml"
     f.write_text('[rejects]\n"n0003.fits" = "open AO loop"\n')
     assert load_rejects(str(f)) == {"n0003.fits": "open AO loop"}
 
 
 def test_record_reject_upgrades_a_list_file_in_place(tmp_path):
+    """Writing to a legacy list file upgrades it and keeps its entries."""
     f = tmp_path / "r.toml"
     f.write_text('rejects = ["n0001.fits"]\n')
     record_reject(str(f), "n0009.fits", "satellite trail")
@@ -79,12 +85,14 @@ def test_record_reject_upgrades_a_list_file_in_place(tmp_path):
 
 
 def test_record_reject_takes_a_basename_from_a_path(tmp_path):
+    """A full path is reduced to its basename, matching how rejects are used."""
     f = tmp_path / "r.toml"
     record_reject(str(f), "/data/2026-06-05/raw/n0042.fits", "cloud")
     assert "n0042.fits" in load_rejects(str(f))
 
 
 def test_record_reject_updates_an_existing_reason(tmp_path):
+    """Re-recording a frame replaces its reason rather than duplicating it."""
     f = tmp_path / "r.toml"
     record_reject(str(f), "n0001.fits", "first guess")
     record_reject(str(f), "n0001.fits", "actually the AO loop opened")
@@ -94,6 +102,7 @@ def test_record_reject_updates_an_existing_reason(tmp_path):
 
 
 def test_record_reject_escapes_quotes_and_backslashes(tmp_path):
+    """Quotes and backslashes in a reason survive the TOML round trip."""
     f = tmp_path / "r.toml"
     messy = 'seeing was "bad", see C:\\logs'
     record_reject(str(f), "n0001.fits", messy)

@@ -9,6 +9,7 @@ from instruments.nirc2 import NIRC2PolarimetryData
 
 
 def test_band_of_prefers_fwiname():
+    """FWINAME wins when present, since FILTER holds both wheels."""
     assert band_of({"FWINAME": "Kp", "FILTER": "Kp + Wollaston"}) == "Kp"
 
 
@@ -19,6 +20,7 @@ def test_band_of_falls_back_to_the_filter_first_token():
 
 
 def test_band_of_strips_whitespace():
+    """Padded header values are trimmed."""
     assert band_of({"FWINAME": "  Lp "}) == "Lp"
 
 
@@ -34,12 +36,14 @@ def test_occulting_radius_from_slitname(slitname, expected):
 
 
 def test_occulting_radius_corona150_is_about_seven_and_a_half_pixels():
+    """The documented 7.5 px figure for corona150, checked numerically."""
     got = NIRC2PolarimetryData().occulting_radius({"SLITNAME": "corona150"})
     assert got == pytest.approx(7.54, abs=0.01)
 
 
 @pytest.mark.parametrize("slitname", ["none", "", "clear", "coronaXYZ"])
 def test_occulting_radius_none_when_unocculted_or_unparseable(slitname):
+    """Unocculted or unrecognised slit names give None, not a guess."""
     assert NIRC2PolarimetryData().occulting_radius(
         {"SLITNAME": slitname}) is None
 
@@ -54,11 +58,13 @@ def test_check_background_choice_warns_on_annulus_at_lprime():
 
 
 def test_check_background_choice_accepts_annulus_in_the_near_infrared():
+    """An annulus is the recommended choice in JHK."""
     assert check_background_choice("Kp", "annulus") is True
     assert check_background_choice("H", "annulus") is True
 
 
 def test_check_background_choice_passes_unknown_bands_and_none():
+    """Unknown bands and an unset method pass, rather than warning blindly."""
     assert check_background_choice("H2O_ice", "annulus") is True
     assert check_background_choice("Lp", None) is True
 
@@ -70,6 +76,13 @@ def test_check_background_choice_passes_unknown_bands_and_none():
 # relationships the model claims instead.
 
 def _pa_header(mode, rotposn=90.0, parang=30.0, instangl=0.7):
+    """A header for the north-angle model.
+
+    Returns
+    -------
+    dict
+        Header with the rotator mode, position, instrument angle and PARANG.
+    """
     return {"ROTMODE": mode, "ROTPOSN": rotposn, "INSTANGL": instangl,
             "PARANG": parang}
 
@@ -86,22 +99,26 @@ def test_position_angle_mode_ignores_the_parallactic_angle():
 
 
 def test_position_angle_mode_tracks_the_rotator_one_for_one():
+    """In position angle mode the north angle follows ROTPOSN exactly."""
     a, _ = calculate_north_angle(_pa_header("position angle", rotposn=90.0))
     b, _ = calculate_north_angle(_pa_header("position angle", rotposn=100.0))
     assert b - a == pytest.approx(10.0)
 
 
 def test_position_angle_mode_offsets_by_the_instrument_angle():
+    """INSTANGL enters with the opposite sign to ROTPOSN."""
     a, _ = calculate_north_angle(_pa_header("position angle", instangl=0.0))
     b, _ = calculate_north_angle(_pa_header("position angle", instangl=5.0))
     assert a - b == pytest.approx(5.0)
 
 
 def test_stationary_mode_is_nan():
+    """Stationary mode has no defined north angle, so it returns NaN."""
     angle, _ = calculate_north_angle(_pa_header("stationary"))
     assert np.isnan(angle)
 
 
 def test_unknown_rotator_mode_raises():
+    """An unrecognised rotator mode raises rather than guessing."""
     with pytest.raises(ValueError, match="Unknown rotator mode"):
         calculate_north_angle(_pa_header("nonsense"))

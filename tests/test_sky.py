@@ -11,13 +11,29 @@ from utils.frame import Frame
 
 def _star_on_pedestal(n=64, pedestal=500.0, amp=1000.0):
     """A Gaussian star on a flat pedestal. Its peak lands half a pixel off
-    the grid centre, so tests compare against the input rather than ``amp``."""
+        the grid centre, so tests compare against the input rather than ``amp``.
+
+    Parameters
+    ----------
+    n : int, optional
+        Frame size.
+    pedestal : float, optional
+        Flat background level.
+    amp : float, optional
+        Star amplitude.
+
+    Returns
+    -------
+    img, r : ndarray
+        The image and its radius grid.
+    """
     yy, xx = np.mgrid[:n, :n]
     r = np.hypot(yy - (n - 1) / 2, xx - (n - 1) / 2)
     return amp * np.exp(-r ** 2 / (2 * 3.0 ** 2)) + pedestal, r
 
 
 def test_subtract_mean_background_removes_a_known_pedestal():
+    """The pedestal measured in a source-free box is removed; the star stays."""
     img, r = _star_on_pedestal()
     pedestal = 500.0
     out = subtract_mean_background(img, box=(0, 12, 0, 12))   # star-free corner
@@ -27,23 +43,27 @@ def test_subtract_mean_background_removes_a_known_pedestal():
 
 
 def test_subtract_mean_background_defaults_to_the_whole_image():
+    """With no box given the whole image sets the level."""
     img = np.full((8, 8), 3.0)
     assert np.allclose(subtract_mean_background(img), 0.0)
 
 
 def test_subtract_mean_background_does_not_mutate_its_input():
+    """The caller's array is left alone; a new one is returned."""
     img = np.full((8, 8), 3.0)
     subtract_mean_background(img)
     assert np.allclose(img, 3.0), "must return a new array"
 
 
 def test_subtract_mean_background_handles_a_stack():
+    """Each plane of a stack gets its own background."""
     stack = np.stack([np.full((8, 8), 2.0), np.full((8, 8), 5.0)])
     out = subtract_mean_background(stack)
     assert np.allclose(out, 0.0), "each plane gets its own background"
 
 
 def test_subtract_annulus_background_removes_the_pedestal():
+    """The annulus median is removed and the source survives."""
     img, r = _star_on_pedestal()
     out = subtract_annulus_background(img, 20, 30, center=(31.5, 31.5))
     annulus = (r >= 20) & (r <= 30)
@@ -81,6 +101,7 @@ def test_subtract_annulus_background_finds_the_star_itself():
 
 
 def test_subtract_dither_pairs_cancels_a_common_pedestal():
+    """A pedestal common to both dither positions cancels exactly."""
     pedestal = np.random.default_rng(0).normal(800, 5, size=(16, 16))
     a = Frame(pedestal + 10.0, {"FILENAME": "a.fits"})
     b = Frame(pedestal.copy(), {"FILENAME": "b.fits"})
@@ -91,12 +112,20 @@ def test_subtract_dither_pairs_cancels_a_common_pedestal():
 
 
 def test_subtract_dither_pairs_pairs_up_to_the_shorter_list():
+    """Mismatched lists pair up to the shorter one rather than raising."""
     frames = [Frame(np.zeros((4, 4)), {"FILENAME": f"{i}.fits"})
               for i in range(3)]
     assert len(subtract_dither_pairs(frames, frames[:2])) == 2
 
 
 def _lamp_frames(n=5, level=5000.0, itime=30.0):
+    """Lamp-on dome flats at a uniform level.
+
+    Returns
+    -------
+    list of Frame
+        The synthetic flats.
+    """
     return [Frame(np.full((16, 16), level),
                   {"FILTER": "Kp + Wollaston", "FWINAME": "Kp", "NAXIS1": 16,
                    "NAXIS2": 16, "ITIME": itime, "COADDS": 1, "SAMPMODE": 3,
@@ -105,6 +134,13 @@ def _lamp_frames(n=5, level=5000.0, itime=30.0):
 
 
 def _dark_frames(n=5, level=100.0, itime=30.0):
+    """Darks matching the lamp flats' exposure settings.
+
+    Returns
+    -------
+    list of Frame
+        The synthetic darks.
+    """
     return [Frame(np.full((16, 16), level),
                   {"FILTER": "Kp + Wollaston", "FWINAME": "Kp", "NAXIS1": 16,
                    "NAXIS2": 16, "ITIME": itime, "COADDS": 1, "SAMPMODE": 3,
@@ -137,4 +173,5 @@ def test_make_lamp_flats_tags_nodark_when_no_dark_matches():
 
 
 def test_make_lamp_flats_needs_enough_frames():
+    """Too few frames yields no master rather than a noisy one."""
     assert make_lamp_flats(_lamp_frames(n=2), [])[0] == {}

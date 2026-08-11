@@ -12,6 +12,7 @@ from polarimetry.stokes import (double_difference,
 
 
 def test_subtract_ip_is_exact():
+    """Removing a leakage equal to the signal leaves exactly zero."""
     I = np.full((16, 16), 100.0)
     Q = np.full((16, 16), 3.0)
     U = np.full((16, 16), -2.0)
@@ -32,6 +33,7 @@ def test_subtract_ip_separate_u_intensity():
 
 
 def test_measure_ip_annulus_recovers_injection():
+    """The annulus estimator returns the injected leakage exactly."""
     yy, xx = np.mgrid[:NY, :NX]
     r = np.hypot(yy - (NY - 1) / 2, xx - (NX - 1) / 2)
     I = np.exp(-r ** 2 / (2 * 20.0 ** 2)) * 1000 + 1.0
@@ -43,6 +45,7 @@ def test_measure_ip_annulus_recovers_injection():
 
 
 def test_measure_ip_annulus_rejects_empty_annulus():
+    """An annulus containing no finite pixels raises."""
     a = np.ones((16, 16))
     with pytest.raises(ValueError, match="no finite pixels"):
         measure_ip_annulus(a, a, a, 100, 200)
@@ -74,7 +77,9 @@ def test_measure_ip_cycle_without_radius_raises():
     from conftest import SyntheticPolarimetryData
 
     class NoMask(SyntheticPolarimetryData):
+        """An instrument with no coronagraph, to exercise the missing-radius path."""
         def occulting_radius(self, header):
+            """No occulting mask on this instrument."""
             return None
 
     cycle = synth_cycle(0.0)
@@ -106,6 +111,7 @@ def test_normalized_single_difference_sign_convention(instrument, truth):
 
 
 def test_normalized_single_difference_rejects_empty_mask(instrument):
+    """A mask selecting nothing raises rather than dividing by zero."""
     cycle = synth_cycle(0.0)
     empty = np.zeros((NY, NX), dtype=bool)
     with pytest.raises(ValueError, match="no finite pixels"):
@@ -139,6 +145,7 @@ def test_fit_ip_uphi_recovers_injection(instrument, truth):
 
 
 def test_fit_ip_uphi_finds_nothing_on_clean_data(instrument, truth):
+    """With no leakage injected, the fit returns nothing to remove."""
     cycle = synth_cycle(truth["theta_off"], 0.0, 0.0)
     ip = fit_ip_uphi(instrument, cycle, truth["theta_off"], mask_radius=6,
                      crop_size=None, register_method=None, derotate=False)
@@ -147,6 +154,7 @@ def test_fit_ip_uphi_finds_nothing_on_clean_data(instrument, truth):
 
 
 def test_mean_ip_reports_scatter():
+    """Averaging keeps the cycle-to-cycle scatter as the error bar."""
     ips = [InstrumentalPolarization(q, u, method="edge_annulus")
            for q, u in ((0.010, 0.004), (0.012, 0.006), (0.008, 0.002))]
     avg = mean_ip(ips)
@@ -157,6 +165,7 @@ def test_mean_ip_reports_scatter():
 
 
 def test_ip_magnitude_and_angle():
+    """Magnitude and position angle follow from ipq/ipu, wrapped to [0, 180)."""
     ip = InstrumentalPolarization(0.01, 0.0, method="manual")
     assert ip.magnitude == pytest.approx(0.01)
     assert ip.angle == pytest.approx(0.0)

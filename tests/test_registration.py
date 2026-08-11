@@ -17,6 +17,13 @@ from reduction.registration import (find_center, find_center_gaussian,
 
 
 def gaussian_star(n=128, cy=63.4, cx=64.7, sigma=3.0, amp=1000.0, bg=50.0):
+    """A Gaussian star on a flat background.
+
+    Returns
+    -------
+    ndarray
+        The image, with its peak at the requested fractional position.
+    """
     yy, xx = np.mgrid[:n, :n]
     return amp * np.exp(-(((xx - cx) ** 2 + (yy - cy) ** 2)
                           / (2 * sigma ** 2))) + bg
@@ -31,6 +38,7 @@ def test_smooth_peak_is_subpixel(cy, cx):
 
 
 def test_fit_2d_gaussian_recovers_parameters():
+    """Amplitude, position and background all come back from the fit."""
     img = gaussian_star(cy=63.4, cx=64.7, sigma=3.0, amp=1000.0, bg=50.0)
     amp, x0, y0, offset = fit_2d_gaussian(img, [900.0, 64, 63, 40.0],
                                           fixed_sigma=3.0)
@@ -41,6 +49,7 @@ def test_fit_2d_gaussian_recovers_parameters():
 
 
 def test_gaussian_method_is_subpixel():
+    """The gaussian centering method reaches subpixel precision too."""
     got = find_center(gaussian_star(cy=63.4, cx=64.7), method="gaussian")
     assert got[0] == pytest.approx(63.4, abs=0.05)
     assert got[1] == pytest.approx(64.7, abs=0.05)
@@ -59,6 +68,7 @@ def test_gaussian_survives_small_cutout():
 
 
 def test_gaussian_on_all_nan_raises_clearly():
+    """An all-NaN frame raises a message naming the cause, not a scipy error."""
     with pytest.raises(ValueError, match="no finite pixels"):
         find_center_gaussian(np.full((64, 64), np.nan))
 

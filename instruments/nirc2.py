@@ -127,7 +127,18 @@ FLAT_ELEVATION = 45.0  # deg; dome flats are always taken at this elevation
 
 
 def _small_angle_distance(a, b):
-    """Angular distance between two (ra, dec) pairs in degrees."""
+    """Angular distance between two (ra, dec) pairs in degrees.
+
+    Parameters
+    ----------
+    a, b : tuple of float
+        ``(ra, dec)`` pairs in degrees.
+
+    Returns
+    -------
+    float
+        Small-angle separation in degrees.
+    """
     (ra_a, dec_a), (ra_b, dec_b) = a, b
     return np.sqrt(((ra_a - ra_b) * np.cos(np.deg2rad(dec_a))) ** 2
                    + (dec_a - dec_b) ** 2)
@@ -160,12 +171,26 @@ def _at_flat_position(frame, arcsec_threshold):
 
 def is_lampon_frame(frame, arcsec_threshold=100.0, min_flat_counts=100.0):
     """Dome flat with the lamp on: telescope at the flat position, AO loops
-    open, shutter open, and counts above ``min_flat_counts``.
+        open, shutter open, and counts above ``min_flat_counts``.
 
-    Lamp-*off* frames are not classified at all. They carry no useful
-    information -- in JHK they are meaningless, and at L' the dome lamp is
-    swamped by thermal background so sky flats are used regardless -- and
-    the count threshold now only separates an illuminated flat from a dud.
+        Lamp-*off* frames are not classified at all. They carry no useful
+        information -- in JHK they are meaningless, and at L' the dome lamp is
+        swamped by thermal background so sky flats are used regardless -- and
+        the count threshold now only separates an illuminated flat from a dud.
+
+    Parameters
+    ----------
+    frame : Frame
+        Frame to test.
+    arcsec_threshold : float, optional
+        Tolerance on the flat-field elevation.
+    min_flat_counts : float, optional
+        Median counts below which the frame is not an illuminated flat.
+
+    Returns
+    -------
+    bool
+        True for a lamp-on dome flat.
     """
     return (_at_flat_position(frame, arcsec_threshold)
             and np.median(frame.data) > min_flat_counts)
@@ -261,7 +286,22 @@ def _ten(value):
 
 def par_angle(hour_angle, dec, lat):
     """Parallactic angle [deg] from hour angle [hours], declination [deg],
-    and latitude [deg]. Source: pyKLIP."""
+        and latitude [deg]. Source: pyKLIP.
+
+    Parameters
+    ----------
+    ha : float
+        Hour angle in degrees.
+    dec : float
+        Declination in degrees.
+    lat : float
+        Observatory latitude in degrees.
+
+    Returns
+    -------
+    float
+        Parallactic angle in degrees.
+    """
     ha_rad = np.deg2rad(hour_angle * 15.0)
     dec_rad = np.deg2rad(dec)
     lat_rad = np.deg2rad(lat)
@@ -355,7 +395,22 @@ def calculate_north_angle(header):
 
 def make_frametable(frames, table_filename, fields=None):
     """Write a fixed-width text table of frame header values for a quick
-    overview of a night's data."""
+        overview of a night's data.
+
+    Parameters
+    ----------
+    filenames : iterable of str
+        Frames to tabulate.
+    keywords : iterable of str, optional
+        Header keywords to include as columns.
+    sort_by : str, optional
+        Column to sort on.
+
+    Returns
+    -------
+    astropy.table.Table
+        One row per frame -- a quick way to see what a night contains.
+    """
     field_widths = {
         "FILENAME": 18, "OBJECT": 16, "TARGNAME": 16, "RA": 12, "DEC": 12,
         "CAMNAME": 8, "DATE-OBS": 10, "UTC": 11, "ITIME": 8, "COADDS": 8,
@@ -574,10 +629,23 @@ class NIRC2PolarimetryData(PolarimetryData):
     def qu_rotation_angle(self, header, fast_axis_offset=None):
         """Overall polarimetric rotation [deg] (SPIE Eq. 3)::
 
-            theta_rot = -2*PARANG + 2*EL + 2*ROTPDEST + 4*theta_off
+                    theta_rot = -2*PARANG + 2*EL + 2*ROTPDEST + 4*theta_off
 
-        assuming an idealized system; the full Mueller matrix model will
-        replace this once calibrated (see polarimetry/mueller.py).
+                assuming an idealized system; the full Mueller matrix model will
+                replace this once calibrated (see polarimetry/mueller.py).
+
+        Parameters
+        ----------
+        header : Frame or Header
+            Frame supplying PARANG, EL and the rotator position.
+        fast_axis_offset : float, optional
+            theta_off in degrees. When omitted the instrument's attribute is used,
+            and a one-time warning fires if that is still the uncalibrated 0.
+
+        Returns
+        -------
+        float
+            theta_rot in degrees, by which Q/U rotate into the sky frame.
         """
         if fast_axis_offset is None:
             # Only warn when the caller did not say: passing 0.0 explicitly
@@ -614,9 +682,22 @@ RECOMMENDED_BACKGROUND = {
 def check_background_choice(band, method):
     """Warn if a background method is a poor fit for the observing band.
 
-    L' and M sit on a large, structured thermal pedestal, so they need
-    dither-pair subtraction or at least a mean box; in JHK an annulus
-    around the source is usually cleanest.
+        L' and M sit on a large, structured thermal pedestal, so they need
+        dither-pair subtraction or at least a mean box; in JHK an annulus
+        around the source is usually cleanest.
+
+    Parameters
+    ----------
+    band : str
+        Observing band, e.g. from :func:`band_of`.
+    method : str or None
+        Background method being used.
+
+    Returns
+    -------
+    bool
+        True if the choice is recommended for the band. Unknown bands and a
+        None method pass, since there is nothing to advise.
     """
     rec = RECOMMENDED_BACKGROUND.get(str(band).strip())
     if rec is None or method is None:

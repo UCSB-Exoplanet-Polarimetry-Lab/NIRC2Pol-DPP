@@ -69,6 +69,7 @@ def test_wrong_offset_leaks_into_uphi(instrument, truth):
 
 
 def test_rotate_qu_round_trip():
+    """Rotating Q/U and back returns the original, so the sign is consistent."""
     Q, U = np.array([[1.0]]), np.array([[0.5]])
     q, u = rotate_qu(*rotate_qu(Q, U, 37.0), -37.0)
     assert q == pytest.approx(Q)
@@ -93,6 +94,7 @@ def test_radial_stokes_sign_convention():
 
 
 def test_incomplete_cycle_raises(instrument):
+    """A cycle missing a critical angle raises rather than silently combining."""
     cycle = synth_cycle(0.0)[:2]
     with pytest.raises(ValueError, match="No frames at modulator angle"):
         double_difference(instrument, cycle, register_method=None)

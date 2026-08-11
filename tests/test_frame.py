@@ -28,6 +28,7 @@ def _header_with_bad_continue():
 
 
 def test_scrub_header_keeps_the_good_keywords():
+    """Scrubbing drops only the malformed cards, not the usable keywords."""
     scrubbed = scrub_header(_header_with_bad_continue())
     assert scrubbed["OBJECT"] == "AB Aur"
     assert scrubbed["ITIME"] == pytest.approx(0.45)
@@ -56,6 +57,7 @@ def test_scrub_header_survives_in_memory_cards():
 
 
 def test_frame_save_load_round_trip(tmp_path):
+    """Data and header survive a write and read, and FILENAME is stamped."""
     out = tmp_path / "f.fits"
     data = np.arange(24, dtype=float).reshape(4, 6)
     Frame(data, {"OBJECT": "test", "ITIME": 2.0}).save(str(out))
@@ -66,6 +68,7 @@ def test_frame_save_load_round_trip(tmp_path):
 
 
 def test_save_frames_and_load_master_round_trip(tmp_path):
+    """A multi-extension master file reloads as the frames that went in."""
     out = tmp_path / "masters.fits"
     frames = [Frame(np.full((3, 3), float(i)), {"NFRAMES": i})
               for i in range(1, 4)]
@@ -76,11 +79,13 @@ def test_save_frames_and_load_master_round_trip(tmp_path):
 
 
 def test_get_between_selects_a_frame_number_range():
+    """Selection by FRAMENO is inclusive at both ends."""
     frames = [Frame(np.zeros((2, 2)), {"FRAMENO": n}) for n in (5, 6, 7, 8, 9)]
     assert [f["FRAMENO"] for f in get_between(frames, (6, 8))] == [6, 7, 8]
 
 
 def test_match_keys_groups_by_header_values():
+    """Frames sharing header values land in the same group."""
     frames = [Frame(np.zeros((2, 2)), {"FILTER": f, "ITIME": t})
               for f, t in (("H", 1.0), ("H", 1.0), ("Kp", 1.0))]
     groups = match_keys(frames, ["FILTER", "ITIME"])
