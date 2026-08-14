@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.DS_Store
+
+# This branch carries the pipeline only. No science data
+*.fits
+*.fits.gz
+*.png
+*.jpg
+*.jls
+*.npy
+*.npz
+
+# ...except the static detector bad-pixel mask, which the pipeline needs
+# in order to run.
+!instruments/masks/*.fits
