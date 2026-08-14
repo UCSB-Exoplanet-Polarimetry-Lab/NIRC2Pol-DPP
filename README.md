@@ -14,6 +14,7 @@ Coming soon!
 - Both polarimetric and standard flat fielding
 - Multiple options for image registration
 - Stokes cube generation with options for combining HWP cycles, converting to radial Stokes
+- Multiple methods for empirical instrumental polarization correction and HWP fast axis determination
 - Mueller matrix model correction from Zhang et al. 2026 [coming soon]
 
 ## Installation
