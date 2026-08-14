@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # NIRC2-Pol DPP
 Last Updated: 14 Aug 2026
 
@@ -68,3 +69,23 @@ Some of the data presented herein were obtained at Keck Observatory, which is a 
 This material is based upon work supported by the National Science Foundation Astronomy \& Astrophysics Postdoctoral Fellowship Award No. 2401654. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views of the National Science Foundation. This work was also supported by the Mt. Cuba Astronomical Foundation and the University of California Observatories Mini-Grant Program.
 
 This repository was written with the help of Claude Version 1.24012.9 (o3c61d) using Fable 5 and Opus 5. Thank you to Jayke Nguyen for writing [AIR.jl](https://github.com/jsnguyen/AIR.jl) which was adapted into Python for the basic reduction steps in the DPP (e.g. dark subtraction, flat fielding).
+=======
+# NIRC2-Pol-DPP
+NIRC2 Polarimetry Data Processing Pipeline
+
+!! heavily under construction !!
+
+inspired by:
+
+jayke's julia reduction: https://github.com/jsnguyen/AIR.jl
+
+keck nirc2 "calibrated data" page: https://koa.ipac.caltech.edu/UserGuide/NIRC2/calibrated_data.html
+
+page that shows existing pipelines for keck instruments: https://www2.keck.hawaii.edu/inst/drp.html
+
+reduction software from twilight zone programs: https://nirc2-reduce.readthedocs.io/en/latest/description.html
+
+Jessica Lu's IRAF/pyRAF pipeline + her one for distortion: https://keck-datareductionpipelines.github.io/KAI/ and https://github.com/jluastro/nirc2_distortion
+--> Natasha Abrams (Jessica's grad student) also recently upgraded this to move away from IRAF https://astro.berkeley.edu/people/natasha-abrams
+
+>>>>>>> origin/main
