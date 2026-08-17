@@ -60,9 +60,17 @@ header, with dict-style keyword access. Data follow the numpy convention
 `data[y, x]`.
 
 ```python
-DATA = "/home/shared/exoserver/NIRC2_Pol/jaykes_reduction/2025-12-07"
+# The tutorial dataset ships with the repository: 14 frames of AB Aur,
+# 2025-12-07 UT, L' + Wollaston. See examples/tutorial_data/README.md for
+# what is in it and why. Point DATA at an observing folder to use a whole
+# night instead.
+DATA = next(p for p in ("examples/tutorial_data",       # from the repo root
+                        "tutorial_data",                 # from examples/
+                        "../examples/tutorial_data")     # from anywhere else
+            if os.path.isdir(p))
 
-frame = Frame.load(f"{DATA}/raw/n0932.fits")   # an AB Aur science frame
+
+frame = Frame.load(f"{DATA}/raw/n0932.fits.gz")   # an AB Aur science frame
 print(frame)
 print("shape:", frame.shape)
 print("OBJECT:", frame["OBJECT"], "| FILTER:", frame["FILTER"],
@@ -105,20 +113,16 @@ shutter closed → dark; telescope at the dome-flat position with AO loops
 open → lamp-on/off flat (split by count level); OBJECT containing
 "sky"/"twi" → sky flat; everything else → science.
 
-*The full night here has 1265 frames — sorting loads each one, so this takes
-a few minutes. For the tutorial we sort a subset covering darks, flats, and
-the AB Aur science sequence.*
+*Sorting loads every frame to read its header, so on a full night — 1265
+frames for this one — it takes a few minutes. The bundled dataset is 14
+frames and sorts instantly.*
 
 ```python
-def frameno(path):
-    return int(os.path.basename(path)[1:5])   # raw files are n####.fits
-
-# For a real reduction just glob the whole raw folder; for the tutorial we
-# take a subset: sky flats + the AB Aur sequence + its matching darks.
-raw_files = [f for f in sorted(glob.glob(f"{DATA}/raw/*.fits"))
-             if 901 <= frameno(f) <= 913     # sky flats (Lp + Wollaston)
-             or 932 <= frameno(f) <= 963     # AB Aur science frames
-             or 984 <= frameno(f) <= 993]    # darks matching the science settings
+# The bundle is already the subset a tutorial needs -- sky flats, darks and
+# two HWP cycles of AB Aur -- so this globs the folder rather than filtering
+# frame numbers. The glob matches *.fits* because the frames are gzipped;
+# astropy reads .fits.gz transparently.
+raw_files = sorted(glob.glob(f"{DATA}/raw/*.fits*"))
 
 sorted_files = instrument.sort_frames(raw_files)
 for kind, files in sorted_files.items():
