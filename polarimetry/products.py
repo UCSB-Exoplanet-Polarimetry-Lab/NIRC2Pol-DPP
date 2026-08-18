@@ -79,7 +79,7 @@ class ProductWriter:
         """Absolute path of a product file inside the output directory."""
         return os.path.join(self.output_dir, f"{self.target}_{name}")
 
-    def _save(self, data, header, name, step=None, **params):
+    def _save(self, data, header, name, step=None, bunit=None, **params):
         """Write one product, stamping its provenance.
 
         Parameters
@@ -92,6 +92,9 @@ class ProductWriter:
             Product name; the filename becomes ``<target>_<name>``.
         step : str, optional
             Provenance step recorded via ``utils.provenance.record_step``.
+        bunit : str, optional
+            Override the units inherited from ``header``. Pass ``""`` for a
+            dimensionless product; None leaves whatever the header carried.
         **params
             Extra provenance parameters.
 
@@ -104,6 +107,10 @@ class ProductWriter:
         if step:
             record_step(frame, step, **params)
         frame["PRODUCT"] = (name, "NIRC2Pol-DPP product type")
+        if bunit is not None:
+            # "" is meaningful here: a dimensionless ratio, as opposed to
+            # None which means "whatever the input header already said".
+            frame["BUNIT"] = (bunit, "physical units of the array values")
         out = self.path(name if name.endswith(".fits") else f"{name}.fits")
         frame.save(out, overwrite=self.overwrite)
         log.info("wrote %s", out)
@@ -241,6 +248,11 @@ class ProductWriter:
         q_phi, u_phi = radial_stokes(cube[1], cube[2], center=center)
 
         out = {}
+        # BUNIT arrives on the header copied from a reduced frame, where it
+        # describes the Stokes values. It is right for PI and the radial
+        # Stokes, which share those units, and wrong for the two derived
+        # quantities that do not: DoLP is a ratio and AoLP is an angle. Each
+        # product therefore states its own.
         for name, data, step, extra in [
                 ("PI", pi, "polarized intensity sqrt(Q^2+U^2)", {}),
                 ("AoLP", aolp, "angle of linear polarization 0.5*atan2(U,Q)",
@@ -248,6 +260,7 @@ class ProductWriter:
                 ("DoLP", dolp, "degree of linear polarization PI/I", {}),
                 ("Qphi", q_phi, "radial Stokes Q_phi", {"center": center}),
                 ("Uphi", u_phi, "radial Stokes U_phi", {"center": center})]:
-            out[name] = self._save(data, header, name, step=step,
+            unit = {"AoLP": "deg", "DoLP": ""}.get(name)
+            out[name] = self._save(data, header, name, step=step, bunit=unit,
                                    **{**extra, **params})
         return out

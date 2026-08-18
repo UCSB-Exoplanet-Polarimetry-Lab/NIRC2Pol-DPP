@@ -230,3 +230,57 @@ def test_a_folder_dated_for_the_hst_evening_is_flagged(caplog):
     with caplog.at_level(logging.WARNING):
         ObslogPaths("/data", "2025-12-08").check_frame_dates(frames)
     assert not caplog.records, "the matching date must not warn"
+
+
+# --- what the numbers are --------------------------------------------------
+
+def _unit_frame(**kwargs):
+    from reduction.calibrate import reduce_frame
+    sci = Frame(np.ones((8, 8)),
+                {"FILTER": "Kp + Wollaston", "FWINAME": "Kp", "NAXIS1": 8,
+                 "NAXIS2": 8, "FILENAME": "s.fits", "FRAMENO": 1,
+                 "ITIME": 0.45, "COADDS": 45})
+    flat = Frame(np.ones((8, 8)),
+                 {"FILTER": "Kp + Wollaston", "FWINAME": "Kp", "NAXIS1": 8,
+                  "NAXIS2": 8, "FLATTYPE": "LAMP", "NFRAMES": 3})
+    return reduce_frame(sci, [flat], [], **kwargs)
+
+
+@pytest.mark.parametrize("kwargs, expected", [
+    (dict(gain=8.0), "electron/s"),
+    (dict(gain=8.0, div_itime=False), "electron/coadd"),
+    (dict(gain=1.0), "adu/s"),
+    (dict(gain=8.0, div_itime=False, div_coadds=False), "electron"),
+])
+def test_bunit_states_what_was_actually_done(kwargs, expected):
+    """Derived from the operations applied, not assumed: DIVCOADD, DIVITIME
+    and GAIN already record them, but reading units off three booleans is
+    work nobody should do to open a file."""
+    assert _unit_frame(**kwargs)["BUNIT"] == expected
+
+
+def test_each_product_states_its_own_units(tmp_path):
+    """Product headers are copied from a reduced frame, so they arrive saying
+    electron/s. That is right for PI and the radial Stokes and wrong for
+    DoLP, a ratio, and AoLP, an angle -- so those two must override it."""
+    from polarimetry.products import ProductWriter
+
+    header = _unit_frame(gain=8.0).header
+    assert header["BUNIT"] == "electron/s", "the inherited unit under test"
+    # NAXIS1/2 are structural cards that astropy writes itself; the helper
+    # adds them as ordinary ones for flat matching, which is fine in memory
+    # but not on disk
+    for structural in ("NAXIS1", "NAXIS2"):
+        del header[structural]
+
+    cube = np.stack([np.ones((8, 8)), np.full((8, 8), 0.1),
+                     np.full((8, 8), 0.05)])
+    writer = ProductWriter(str(tmp_path), target="T")
+    writer.save_derived_products(cube, header=header)
+
+    units = {name: Frame.load(str(tmp_path / f"T_{name}.fits"))["BUNIT"]
+             for name in ("PI", "AoLP", "DoLP", "Qphi", "Uphi")}
+    assert units["AoLP"] == "deg"
+    assert units["DoLP"] == ""
+    assert units["PI"] == "electron/s"
+    assert units["Qphi"] == "electron/s" and units["Uphi"] == "electron/s"

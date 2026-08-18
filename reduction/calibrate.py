@@ -406,7 +406,10 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
         How to fill bad pixels.
 
     Returns the reduced Frame with bookkeeping header keywords (DARKSUB,
-    FLATDIV, SKYSUB, DIVCOADD, DIVITIME, GAIN, RED-FN).
+    FLATDIV, SKYSUB, DIVCOADD, DIVITIME, GAIN, BUNIT, RED-FN). BUNIT states
+    the resulting units, derived from what was actually applied rather than
+    assumed: electrons once a gain has been used, ADU otherwise, per second
+    when ITIME was divided out and per coadd when only COADDS was.
     """
     reduced = frame.copy()
     masks = masks or {}
@@ -513,6 +516,19 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
 
     reduced.data *= gain
     reduced["GAIN"] = gain
+
+    # What the numbers actually are. DIVCOADD, DIVITIME and GAIN already
+    # record the operations, but reading units off three booleans is work
+    # nobody should have to do to open a file. BUNIT is the FITS standard
+    # keyword, so DS9 and astropy pick it up without being told.
+    detector_unit = "electron" if gain != 1.0 else "adu"
+    if div_itime:
+        unit = f"{detector_unit}/s"
+    elif div_coadds:
+        unit = f"{detector_unit}/coadd"
+    else:
+        unit = detector_unit
+    reduced["BUNIT"] = (unit, "physical units of the array values")
 
     reduced["RED-FN"] = f"reduced_{int(reduced['FRAMENO']):04d}.fits"
 
