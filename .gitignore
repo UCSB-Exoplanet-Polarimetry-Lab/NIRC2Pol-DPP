@@ -14,5 +14,10 @@ __pycache__/
 *.npz
 
 # ...except the static detector bad-pixel mask, which the pipeline needs
-# in order to run.
+# in order to run,
 !instruments/masks/*.fits
+
+# ...and the tutorial dataset, which is deliberately bundled so the tutorial
+# runs without access to the observatory archive. See
+# examples/tutorial_data/README.md for what it is and why these frames.
+!examples/tutorial_data/**
