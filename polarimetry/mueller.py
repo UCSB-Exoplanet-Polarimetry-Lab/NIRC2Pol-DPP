@@ -47,48 +47,6 @@ class MuellerMatrixModel(ABC):
         """
 
 
-class RotationApproximationModel(MuellerMatrixModel):
-    """Idealized model: pure rotation of Q/U by the instrument's
-    polarimetric rotation angle, with no cross-talk or instrumental
-    polarization terms. Wraps ``instrument.qu_rotation_angle``."""
-
-    def __init__(self, instrument, fast_axis_offset=0.0):
-        """Bind the model to an instrument and a fast axis offset.
-
-        Parameters
-        ----------
-        instrument : PolarimetryData
-            Instrument whose rotation model is used.
-        fast_axis_offset : float, optional
-            theta_off in degrees.
-        """
-        self.instrument = instrument
-        self.fast_axis_offset = fast_axis_offset
-
-    def correct(self, stokes_cube, header):
-        """Rotate instrument-frame Q/U into the sky frame.
-
-        Parameters
-        ----------
-        Q, U : ndarray
-            Instrument-frame Stokes planes.
-        header : Frame or Header
-            Frame supplying the rotation angle.
-
-        Returns
-        -------
-        tuple of ndarray
-            ``(Q_sky, U_sky)``.
-        """
-        from .stokes import rotate_qu
-
-        I, Q, U = stokes_cube
-        theta = self.instrument.qu_rotation_angle(header,
-                                                  self.fast_axis_offset)
-        q_sky, u_sky = rotate_qu(Q, U, theta)
-        return np.stack([I, q_sky, u_sky], axis=0)
-
-
 #
 # TEMPORARY empirical correction — remove when the real Mueller matrix
 # model (ref. 31 of the SPIE paper) is available.

@@ -19,11 +19,9 @@ from .imutils import (
     make_annulus_mask,
     make_circle_mask,
     make_sigma_clip_mask,
-    measure_background,
     plus_mask,
     rotate_image_center,
     translate,
 )
 from .angles import angles_match, is_critical_angle
-from .paths import (ObslogPaths, load_rejects, make_and_clear,
-                    record_reject)
+from .paths import (ObslogPaths, load_rejects,                     record_reject)

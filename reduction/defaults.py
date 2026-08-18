@@ -31,17 +31,9 @@ RANKED_FLATS_KEYLISTS = [
     ["FILTER"],                        # any size: larger flats get cropped
 ]
 
-# Which kind of flat a band REQUIRES. In the thermal infrared the dome lamp
-# is swamped by thermal background, so L'/M must use sky flats; in the near
-# infrared the lamp flats are the meaningful ones. This is a requirement,
-# not a preference: reducing with the wrong kind of flat produces a
-# plausible-looking but wrong result, so find_closest_flat raises rather
-# than substituting. Users can override per reduction (e.g. skies for JHK).
-REQUIRED_FLAT_TYPE_BY_BAND = {
-    "Lp": "SKY", "L": "SKY", "Ms": "SKY", "M": "SKY",
-    "J": "LAMP", "H": "LAMP", "K": "LAMP", "Kp": "LAMP", "Ks": "LAMP",
-}
-DEFAULT_REQUIRED_FLAT_TYPE = "LAMP"
+# NB: which flat type a band requires is NOT here. It differs per
+# instrument, so it lives on the instrument (see
+# PolarimetryData.required_flat_types) and is passed in by the caller.
 
 RANKED_SKIES_KEYLISTS = [
     ["FILTER", "ITIME", "COADDS"],

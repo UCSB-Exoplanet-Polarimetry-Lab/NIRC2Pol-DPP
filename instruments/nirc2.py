@@ -82,6 +82,12 @@ OBSERVATORY_LON = _CONFIG.getfloat("observatory", "longitude")
 FLAT_EXCEPTIONS = {key: _csv("flat_exceptions", key)
                    for key in _CONFIG["flat_exceptions"]}
 
+# Which flat type each band requires, and the fallback for unlisted bands.
+DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG.get("flat_type", "default_flat_type")
+REQUIRED_FLAT_TYPE_BY_BAND = {
+    band: _CONFIG.get("flat_type", band).strip().upper()
+    for band in _CONFIG["flat_type"] if band != "default_flat_type"}
+
 REQUIRED_HEADER_KEYWORDS = [
     "FILENAME", "FILTER", "ITIME", "COADDS", "NAXIS1", "NAXIS2",
     "SAMPMODE", "READS", "EL", "WCDMSTAT", "WCDTSTAT", "OBJECT", "SHRNAME",
@@ -655,6 +661,8 @@ class NIRC2PolarimetryData(PolarimetryData):
     name = "NIRC2"
     plate_scale = PLATE_SCALE
     flat_exceptions = FLAT_EXCEPTIONS
+    required_flat_types = REQUIRED_FLAT_TYPE_BY_BAND
+    default_required_flat_type = DEFAULT_REQUIRED_FLAT_TYPE
 
     # HWP angle lives in PCUPR (the PCU rotation stage holding the HWP;
     # PCUNAME gives the named PCU position)

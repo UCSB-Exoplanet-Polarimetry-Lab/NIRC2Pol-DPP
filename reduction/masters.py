@@ -396,7 +396,8 @@ def make_lamp_flats(lampon_frames, master_darks, keylist=None,
     return master_flat_lamp, master_flat_lamp_masks
 
 
-def required_flat_type_for(band, override=None):
+def required_flat_type_for(band, override=None, flat_types=None,
+                           default=None):
     """Which flat type a band requires: sky flats in the thermal infrared,
         lamp flats in the near infrared. ``override`` (e.g. "SKY") wins, letting
         a user ask for sky flats in JHK.
@@ -411,20 +412,31 @@ def required_flat_type_for(band, override=None):
         Observing band, e.g. from ``instruments.nirc2.band_of``.
     override : str, optional
         Force a type, ``"SKY"`` or ``"LAMP"``; case-insensitive.
+    flat_types : mapping, optional
+        Band to required type, from the instrument
+        (``instrument.required_flat_types``). Which flat a band needs is a
+        property of the instrument, so this code does not carry a table of
+        its own.
+    default : str, optional
+        Type for bands the mapping does not list, from
+        ``instrument.default_required_flat_type``.
 
     Returns
     -------
-    str
-        The required flat type.
+    str or None
+        The required flat type, or None when no mapping was supplied and no
+        default given -- meaning the requirement cannot be evaluated and the
+        caller should not enforce one.
     """
     if override:
         return str(override).upper()
     key = str(band or "").strip()
-    return defaults.REQUIRED_FLAT_TYPE_BY_BAND.get(
-        key, defaults.DEFAULT_REQUIRED_FLAT_TYPE)
+    wanted = (flat_types or {}).get(key, default)
+    return str(wanted).upper() if wanted else None
 
 
-def flat_sort_key(flat, required_type=None):
+def flat_sort_key(flat, required_type=None, flat_types=None,
+                  default_flat_type=None):
     """Sort key implementing the flat preference order.
 
         1. polarimetric flats (critical-angle sets) before all others
@@ -438,6 +450,10 @@ def flat_sort_key(flat, required_type=None):
         Master flat to rank.
     required_type : str, optional
         Override the band default, as for :func:`required_flat_type_for`.
+    flat_types : mapping, optional
+        Band to required type, from ``instrument.required_flat_types``.
+    default_flat_type : str, optional
+        Fallback for bands the mapping does not list.
 
     Returns
     -------
@@ -450,7 +466,8 @@ def flat_sort_key(flat, required_type=None):
 
     band = str(flat.get("FWINAME")
                or str(flat.get("FILTER", "")).split("+")[0].strip())
-    wanted = required_flat_type_for(band, required_type)
+    wanted = required_flat_type_for(band, required_type, flat_types,
+                                   default_flat_type)
 
     if base == wanted:
         type_rank = 0
@@ -466,7 +483,8 @@ def flat_sort_key(flat, required_type=None):
 def make_master_flats(flat_frames, sky_frames, lampon_frames,
                       master_darks, keylist=None, bad_pixel_mask=None,
                       modulator_keyword=None, critical_angles=None,
-                      required_flat_type=None, **kwargs):
+                      required_flat_type=None, required_flat_types=None,
+                      default_required_flat_type=None, **kwargs):
     """Build every available kind of flat and return a single ranked list:
         for any science frame, the first matching flat in the list is the best
         available one.
@@ -509,6 +527,10 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
         Enables the polarimetric split when given with ``critical_angles``.
     critical_angles : iterable of float, optional
         The instrument's critical angles.
+    required_flat_types : mapping, optional
+        Band to required flat type, from ``instrument.required_flat_types``.
+    default_required_flat_type : str, optional
+        Fallback for bands that mapping does not list.
     required_flat_type : str, optional
         Override the band's required type.
     **kwargs
@@ -550,7 +572,9 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
     # polarimetric flats keep separate keys so they are never merged away
     combined = {**master_flats, **master_flats_sky, **master_flats_lamp}
     flats = list(combined.values()) + list(pol_flats.values())
-    flats.sort(key=lambda f: flat_sort_key(f, required_flat_type))
+    flats.sort(key=lambda f: flat_sort_key(
+        f, required_flat_type, required_flat_types,
+        default_required_flat_type))
 
     if flats:
         log.info("Flat preference order: %s",

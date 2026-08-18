@@ -16,7 +16,6 @@ Mirrors AIR.jl's ObslogPaths::
 
 from __future__ import annotations
 
-import glob
 import os
 from dataclasses import dataclass, field
 
@@ -89,16 +88,6 @@ class ObslogPaths:
         for folder in (self.raw_folder, self.reduced_folder,
                        self.plots_folder, self.sequences_folder):
             os.makedirs(folder, exist_ok=True)
-
-
-def make_and_clear(folder_path, glob_pattern):
-    """Create a folder if needed; if it already exists, delete files matching
-    ``glob_pattern`` inside it."""
-    if not os.path.isdir(folder_path):
-        os.makedirs(folder_path)
-    else:
-        for fn in glob.glob(os.path.join(folder_path, glob_pattern)):
-            os.remove(fn)
 
 
 def load_rejects(rejects_file):

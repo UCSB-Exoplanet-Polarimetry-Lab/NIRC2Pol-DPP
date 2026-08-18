@@ -142,3 +142,22 @@ def test_explicit_attributes_beat_the_table():
 def test_unknown_epoch_stops_the_reduction():
     with pytest.raises(ValueError, match="no beam geometry recorded"):
         LookedUp().split_beams(_frame(date_obs="2024-03-03"))
+
+
+# -- warning hygiene ---------------------------------------------------------
+
+def test_reset_warnings_rearms_flags_across_the_mro():
+    """The one-shot flags persist for the life of the process, which is
+    wrong across several reductions: the second night in a session would say
+    nothing about a missing background."""
+    cls = LookedUp
+    cls._warned_no_background = True
+    cls._announced_beam_geometry = True
+    NIRC2PolarimetryData._warned_uncalibrated_offset = True
+
+    cls.reset_warnings()
+
+    assert cls._warned_no_background is False
+    assert cls._announced_beam_geometry is False
+    # a flag set further up the MRO is re-armed too, without naming it here
+    assert NIRC2PolarimetryData._warned_uncalibrated_offset is False

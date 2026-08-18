@@ -16,7 +16,6 @@ from .stokes import (
 from .products import ProductWriter
 from .mueller import (
     MuellerMatrixModel,
-    RotationApproximationModel,
     build_corrected_stokes_cube,
     fit_empirical_cycle_correction,
 )

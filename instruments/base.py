@@ -30,6 +30,14 @@ class PolarimetryData(ABC):
     # reduction.calibrate.find_closest_flat (empty by default)
     flat_exceptions = {}
 
+    # Which flat type each band requires, e.g. {"Lp": "SKY", "H": "LAMP"},
+    # and the fallback for bands not listed. Which flat a band needs is a
+    # property of the instrument and its bands, so it belongs here rather
+    # than in the generic reduction code; pass it to reduce_frame and
+    # make_master_flats. Empty means no requirement is enforced.
+    required_flat_types = {}
+    default_required_flat_type = None
+
     # header keyword holding the polarization modulator position (HWP angle
     # or, for NIRC2, the image rotator position)
     modulator_keyword = None
@@ -57,8 +65,34 @@ class PolarimetryData(ABC):
     background_box = None                 # (ylow, yhigh, xlow, xhigh)
     background_annulus = None             # (r_inner, r_outer) in pixels
 
+    # One-shot warning flags. They are class attributes, so a message is
+    # emitted once per class for the life of the *process* -- in a long
+    # session (a notebook kernel run twice, a batch over several nights) it
+    # will not repeat. Call reset_warnings() between reductions to re-arm
+    # them.
     _warned_no_background = False
     _warned_uncalibrated_offset = False
+
+    @classmethod
+    def reset_warnings(cls):
+        """Re-arm every one-shot warning on this class.
+
+        The warn-once flags persist for the life of the process, which is
+        right within one reduction and wrong across several: the second
+        night reduced in the same session would stay silent about a missing
+        background or an uncalibrated fast axis offset. Call this between
+        reductions so each one is judged on its own.
+
+        Notes
+        -----
+        Walks the MRO and clears every ``_warned_*`` / ``_announced_*`` flag
+        wherever it is defined, so flags added by a subclass are re-armed
+        too without this needing to know their names.
+        """
+        for klass in cls.__mro__:
+            for name in list(vars(klass)):
+                if name.startswith(("_warned_", "_announced_")):
+                    setattr(klass, name, False)
 
     def subtract_background(self, stack):
         """Remove the sky/thermal pedestal from each beam of a stack."""

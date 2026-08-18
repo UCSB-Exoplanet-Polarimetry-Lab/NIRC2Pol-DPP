@@ -160,6 +160,9 @@ master_flats, flat_masks = make_master_flats(
     # rank ahead of every other flat; data without them fall back to regular
     modulator_keyword=instrument.modulator_keyword,
     critical_angles=instrument.critical_angles,
+    # which flat a band requires is a property of the instrument
+    required_flat_types=instrument.required_flat_types,
+    default_required_flat_type=instrument.default_required_flat_type,
 )
 if master_flats:
     save_frames(paths.flats_file, master_flats)
@@ -184,6 +187,8 @@ for frame in sci_frames:
         frame, master_flats, master_darks, master_skies, master_masks,
         bad_pixel_mask=bad_pixel_mask,
         flat_exceptions=instrument.flat_exceptions,
+        required_flat_types=instrument.required_flat_types,
+        default_required_flat_type=instrument.default_required_flat_type,
         gain=instrument.gain(frame),
         saturation_limit=instrument.saturation_limit(frame),
     )

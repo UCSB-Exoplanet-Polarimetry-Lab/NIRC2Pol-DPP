@@ -23,6 +23,9 @@ from . import defaults
 
 log = logging.getLogger(__name__)
 
+# set once when a flat-type check has to be skipped for want of a table
+_WARNED_NO_FLAT_TYPE_TABLE = False
+
 
 def find_matching_master(frame, masters, keylist):
     """First master whose header matches ``frame`` on every keyword in
@@ -54,7 +57,9 @@ def find_matching_master(frame, masters, keylist):
 
 def find_closest_flat(frame, master_flats, ranked_keylists=None,
                       exceptions=None, required_flat_type=None,
-                      allow_flat_type_mismatch=False):
+                      allow_flat_type_mismatch=False,
+                      required_flat_types=None,
+                      default_required_flat_type=None):
     """Find the best-matching flat.
 
         Two things are mandatory. The filter must always match — a flat in another filter describes the
@@ -109,6 +114,14 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     ValueError
         If the best match is not the type the band requires and
         ``allow_flat_type_mismatch`` is False.
+
+    Notes
+    -----
+    The band requirement can only be checked when the instrument's table is
+    supplied via ``required_flat_types`` (from
+    ``instrument.required_flat_types``), since which flat a band needs
+    differs per instrument. Without it the check is skipped and said so
+    once, rather than being quietly dropped.
     """
     from .masters import required_flat_type_for
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
@@ -140,9 +153,24 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
 
     band = str(frame.get("FWINAME")
                or str(frame.get("FILTER", "")).split("+")[0].strip())
-    wanted = required_flat_type_for(band, required_flat_type)
+    wanted = required_flat_type_for(band, required_flat_type,
+                                    required_flat_types,
+                                    default_required_flat_type)
     got = str(matched_flat.get("FLATTYPE", "")).split("+")[0] or "UNKNOWN"
-    if got != wanted:
+    if wanted is None:
+        # No instrument table, so there is nothing to check against. Say so
+        # once: silently skipping a requirement is how a wrong flat gets
+        # through looking plausible, which is the failure this check exists
+        # to prevent.
+        global _WARNED_NO_FLAT_TYPE_TABLE
+        if not _WARNED_NO_FLAT_TYPE_TABLE:
+            _WARNED_NO_FLAT_TYPE_TABLE = True
+            log.warning(
+                "No flat-type table supplied, so the band requirement is "
+                "not being enforced (this frame is %s-band with a %s flat). "
+                "Pass required_flat_types=instrument.required_flat_types to "
+                "check it.", band, got)
+    elif got != wanted:
         available = sorted({str(f.get("FLATTYPE", "UNKNOWN")).split("+")[0]
                             for f in master_flats})
         message = (f"{band}-band data requires a {wanted} flat but the best "
@@ -302,6 +330,7 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None):
 def reduce_frame(frame, master_flats, master_darks, master_skies=None,
                  masks=None, bad_pixel_mask=None, flat_exceptions=None,
                  required_flat_type=None, allow_flat_type_mismatch=False,
+                 required_flat_types=None, default_required_flat_type=None,
                  bad_pixel_mask_size=9, bad_pixel_plus_mask_size=11,
                  gain=1.0, saturation_limit=1e12, skip_sky_sub=True,
                  div_coadds=True, div_itime=False,
@@ -322,6 +351,12 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
         ``instruments.nirc2.load_bad_pixel_mask()``).
     flat_exceptions : dict, optional
         Filter substitution rules passed to :func:`find_closest_flat`.
+    required_flat_types : mapping, optional
+        Band to required flat type, from ``instrument.required_flat_types``.
+        Without it the band requirement cannot be enforced.
+    default_required_flat_type : str, optional
+        Fallback for bands that mapping does not list, from
+        ``instrument.default_required_flat_type``.
     gain : float
         Multiplicative gain (e-/ADU) applied at the end.
     saturation_limit : float
@@ -339,7 +374,9 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
     _, matched_flat = find_closest_flat(
         reduced, master_flats, exceptions=flat_exceptions,
         required_flat_type=required_flat_type,
-        allow_flat_type_mismatch=allow_flat_type_mismatch)
+        allow_flat_type_mismatch=allow_flat_type_mismatch,
+        required_flat_types=required_flat_types,
+        default_required_flat_type=default_required_flat_type)
     _, matched_dark = find_closest_dark(reduced, master_darks)
 
     if matched_dark is None:

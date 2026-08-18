@@ -1,6 +1,6 @@
 # Tutorial dataset
 
-The smallest subset of a real night that runs `docs/tutorial.md` end to end,
+The smallest subset of a real night that runs `examples/tutorial.ipynb` end to end,
 bundled so the tutorial works without access to the observatory archive.
 
 **Source:** AB Aurigae, 2025-12-07 UT, Keck/NIRC2 in L' + Wollaston (narrow
