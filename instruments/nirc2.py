@@ -15,6 +15,7 @@ import re
 from configparser import ConfigParser
 from dataclasses import dataclass, field
 from datetime import date as _date
+from instruments.base import read_config, config_csv
 
 import numpy as np
 from astropy.io import fits
@@ -24,52 +25,7 @@ log = logging.getLogger(__name__)
 CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "nirc2.ini")
 
-
-def read_config(path=CONFIG_PATH):
-    """Read an instrument constants file.
-
-    Parameters
-    ----------
-    path : str, optional
-        Path to the ``.ini``. Defaults to the one shipped beside this module.
-
-    Returns
-    -------
-    ConfigParser
-        The parsed file, with option names case-preserved.
-
-    Raises
-    ------
-    FileNotFoundError
-        If the file is missing. The constants are not optional, and silently
-        falling back to hardcoded values would defeat the point of having
-        them in one auditable place.
-
-    Notes
-    -----
-    ``optionxform`` is overridden so option names keep their case. Band names
-    are option names here, and ConfigParser lowercases them by default, which
-    would make ``Lp`` and ``L`` collide with each other and stop matching what
-    :func:`band_of` returns.
-    """
-    parser = ConfigParser(inline_comment_prefixes=(";",))
-    parser.optionxform = str
-    if not parser.read(path):
-        raise FileNotFoundError(
-            f"NIRC2 instrument constants not found at {path}. This file "
-            "holds the plate scale, detector epochs and beam geometry, so "
-            "the module cannot be used without it.")
-    return parser
-
-
-_CONFIG = read_config()
-
-
-def _csv(section, option, cast=str):
-    """One comma-separated option as a tuple."""
-    return tuple(cast(v.strip())
-                 for v in _CONFIG.get(section, option).split(","))
-
+_CONFIG = read_config(CONFIG_PATH)
 
 PLATE_SCALE = _CONFIG.getfloat("instrument", "plate_scale")
 
@@ -79,13 +35,13 @@ OBSERVATORY_LON = _CONFIG.getfloat("observatory", "longitude")
 
 # narrowband filters with no flats of their own -> acceptable substitutes
 # (passed to reduction.calibrate.find_closest_flat / reduce_frame)
-FLAT_EXCEPTIONS = {key: _csv("flat_exceptions", key)
+FLAT_EXCEPTIONS = {key: config_csv(_CONFIG, "flat_exceptions", key)
                    for key in _CONFIG["flat_exceptions"]}
 
 # Which flat type each band requires, and the fallback for unlisted bands.
 DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG.get("flat_type", "default_flat_type")
 REQUIRED_FLAT_TYPE_BY_BAND = {
-    band: _CONFIG.get("flat_type", band).strip().upper()
+    band: config_csv(_CONFIG, "flat_type", band)
     for band in _CONFIG["flat_type"] if band != "default_flat_type"}
 
 REQUIRED_HEADER_KEYWORDS = [
@@ -1037,7 +993,7 @@ class NIRC2PolarimetryData(PolarimetryData):
 
 
 # Recommended background treatment per band (see PolarimetryData).
-RECOMMENDED_BACKGROUND = {band: _csv("background", band)
+RECOMMENDED_BACKGROUND = {band: config_csv(_CONFIG, "background", band)
                           for band in _CONFIG["background"]}
 
 

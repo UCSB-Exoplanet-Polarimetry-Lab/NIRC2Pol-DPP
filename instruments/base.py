@@ -12,6 +12,7 @@ methods.
 
 from __future__ import annotations
 
+from configparser import ConfigParser
 import logging
 from abc import ABC, abstractmethod
 
@@ -19,6 +20,46 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
+def read_config(path=None):
+    """Read an instrument constants file.
+
+    Parameters
+    ----------
+    path : str, optional
+        Path to the ``.ini``. Defaults to NIRC2, so this method may be re-used when creating a new instruments module.
+
+    Returns
+    -------
+    ConfigParser
+        The parsed file, with option names case-preserved.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file is missing. The constants are not optional, and silently
+        falling back to hardcoded values would defeat the point of having
+        them in one auditable place.
+
+    Notes
+    -----
+    ``optionxform`` is overridden so option names keep their case. Band names
+    are option names here, and ConfigParser lowercases them by default, which
+    would make ``Lp`` and ``L`` collide with each other and stop matching what
+    :func:`band_of` returns.
+    """
+    parser = ConfigParser(inline_comment_prefixes=(";",))
+    parser.optionxform = str
+    if not parser.read(path):
+        raise FileNotFoundError(
+            f"Instrument constants not found at {path}. This file "
+            "holds the plate scale, detector epochs and beam geometry, so "
+            "the module cannot be used without it.")
+    return parser
+
+def config_csv(config_obj, section, option, cast=str):
+    """One comma-separated option as a tuple. A helper to read_config that takes the parser returned by read_config."""
+    return tuple(cast(v.strip())
+                 for v in config_obj.get(section, option).split(","))
 
 class PolarimetryData(ABC):
     """Everything instrument-specific the pipeline needs, in one object."""
