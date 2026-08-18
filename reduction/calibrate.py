@@ -367,7 +367,7 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
                  flat_override=None, allow_no_flat=False,
                  bad_pixel_mask_size=9, bad_pixel_plus_mask_size=11,
                  gain=1.0, saturation_limit=1e12, skip_sky_sub=True,
-                 div_coadds=True, div_itime=False,
+                 div_coadds=True, div_itime=True,
                  replacement_method="interpolation"):
     """Dark-subtract, flat-divide, and clean up a single science frame.
 
@@ -474,6 +474,11 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
 
     mask |= ~np.isfinite(reduced.data)
 
+    # COADDS division is not a units choice: the saturation test below
+    # compares against a per-read limit, so a 45-coadd frame has to be
+    # brought back to per-read first or every pixel reads as saturated.
+    # ITIME division further down is the units choice, and happens after
+    # that test precisely so it cannot disturb it.
     reduced["DIVCOADD"] = False
     if div_coadds:
         reduced.data /= reduced["COADDS"]
@@ -497,6 +502,10 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
     else:
         raise ValueError(f"Invalid replacement method: {replacement_method}")
 
+    # On by default: counts per second is the comparable unit, and it is
+    # what makes frames of different exposure safe to difference. With a
+    # uniform cycle it is a common factor that cancels out of every
+    # polarization ratio, so only the absolute scale depends on it.
     reduced["DIVITIME"] = False
     if div_itime:
         reduced.data /= reduced["ITIME"]

@@ -174,6 +174,38 @@ def _check_background(instrument, cycle):
         pass
 
 
+def _check_cycle_exposure(cycle):
+    """Warn when one cycle's frames were not all taken the same way.
+
+    Parameters
+    ----------
+    cycle : list of Frame
+        The frames of one modulator cycle.
+
+    Notes
+    -----
+    The double difference subtracts frames from each other directly, so
+    frames of unequal depth would contribute unequally. Dividing by ITIME
+    during reduction normalises that away, which is why this warns rather
+    than refuses -- the arithmetic is sound either way. It is still worth
+    saying, because an exposure change inside a single HWP cycle usually
+    means something happened during the observation rather than something
+    intended.
+
+    Warns per cycle, not once per run: each mixed cycle is a separate fact
+    about the data, and reporting only the first would hide the rest.
+    """
+    for keyword in ("ITIME", "COADDS"):
+        values = {f.get(keyword) for f in cycle if f.get(keyword) is not None}
+        if len(values) > 1:
+            log.warning(
+                "Frames in this cycle differ in %s: %s. They are normalised "
+                "per frame during reduction so the double difference is "
+                "still valid, but an exposure change within one HWP cycle "
+                "is worth checking.", keyword,
+                ", ".join(str(v) for v in sorted(values, key=str)))
+
+
 def double_difference(instrument, cycle, critical_angles=CRITICAL_ANGLES,
                       atol=1.0, register_method="smooth_peak",
                       register_kwargs=None, ip=None,
@@ -197,6 +229,7 @@ def double_difference(instrument, cycle, critical_angles=CRITICAL_ANGLES,
     combined.
     """
     _check_background(instrument, cycle)
+    _check_cycle_exposure(cycle)
 
     a_qp, a_qm, a_up, a_um = critical_angles
 

@@ -1,10 +1,15 @@
 """Double differencing: the identities the whole reduction rests on."""
 
+import logging
+
 import numpy as np
+
+from utils import Frame
 import pytest
 
 from conftest import NX, NY, synth_cycle
-from polarimetry.stokes import (build_stokes_cube, double_difference,
+from polarimetry.stokes import (_check_cycle_exposure, build_stokes_cube,
+                                double_difference,
                                 radial_stokes, rotate_qu, single_difference)
 
 
@@ -115,3 +120,46 @@ def test_rebuilding_a_cycle_replaces_its_record_rather_than_stacking(instrument,
     records = [s for s in steps_of(cycle[0].header) if "stokes cube" in s]
     assert len(records) == 1, "one build, one record"
     assert "fast_axis_offset=7" in records[0], "and it is the build that ran last"
+
+
+# --- one exposure per cycle ------------------------------------------------
+
+def _exposure_cycle(itimes, coadds=None):
+    """A four-frame cycle with the given per-frame exposure settings."""
+    coadds = coadds or [1] * len(itimes)
+    return [Frame(np.ones((4, 4)),
+                  {"ITIME": t, "COADDS": c, "PCUPR": angle})
+            for t, c, angle in zip(itimes, coadds, (0.0, 45.0, 22.5, 67.5))]
+
+
+def test_a_uniform_cycle_says_nothing(caplog):
+    with caplog.at_level(logging.WARNING):
+        _check_cycle_exposure(_exposure_cycle([0.45] * 4))
+    assert not caplog.records
+
+
+def test_a_mixed_exposure_cycle_is_flagged(caplog):
+    """The double difference subtracts frames from each other, so unequal
+    depth would contribute unequally. ITIME division normalises that, which
+    is why this warns rather than refuses -- but an exposure change inside
+    one HWP cycle is worth knowing about."""
+    with caplog.at_level(logging.WARNING):
+        _check_cycle_exposure(_exposure_cycle([0.45, 0.45, 0.9, 0.45]))
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "ITIME" in text
+    assert "0.45" in text and "0.9" in text, "the values found must be named"
+
+
+def test_mixed_coadds_are_flagged_too(caplog):
+    with caplog.at_level(logging.WARNING):
+        _check_cycle_exposure(_exposure_cycle([0.45] * 4, coadds=[45, 45, 1, 45]))
+    assert any("COADDS" in r.getMessage() for r in caplog.records)
+
+
+def test_every_mixed_cycle_is_reported_not_just_the_first(caplog):
+    """Warning once would hide every case after the first, and each mixed
+    cycle is a separate fact about the data."""
+    with caplog.at_level(logging.WARNING):
+        for _ in range(3):
+            _check_cycle_exposure(_exposure_cycle([0.45, 0.9, 0.45, 0.45]))
+    assert len([r for r in caplog.records if "ITIME" in r.getMessage()]) == 3

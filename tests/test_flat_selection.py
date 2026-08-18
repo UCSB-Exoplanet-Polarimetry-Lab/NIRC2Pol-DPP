@@ -48,7 +48,8 @@ def _science(filtername="Kp + Wollaston", band="Kp", n=64):
     """
     return Frame(np.ones((n, n)),
                  {"FILTER": filtername, "FWINAME": band, "NAXIS1": n,
-                  "NAXIS2": n, "FILENAME": "sci.fits", "FRAMENO": 932})
+                  "NAXIS2": n, "FILENAME": "sci.fits", "FRAMENO": 932,
+                  "ITIME": 1.0, "COADDS": 1})
 
 
 def _find_flat(*args, **kwargs):
@@ -206,8 +207,13 @@ def test_an_unlisted_band_falls_back_to_the_instrument_default():
 # --- the audit trail reaches the product -------------------------------
 
 def _reduce(science, flat, **kwargs):
-    """Reduce one frame against one flat, with no dark."""
-    return reduce_frame(science, [flat], [], div_coadds=False, **kwargs)
+    """Reduce one frame against one flat, with no dark.
+
+    ITIME and COADDS are both 1 in the helper frames, so the normal
+    divisions run and change nothing -- the frames go through the same path
+    as real data rather than a special-cased one.
+    """
+    return reduce_frame(science, [flat], [], **kwargs)
 
 
 def test_a_checked_reduction_records_that_it_was_checked():
