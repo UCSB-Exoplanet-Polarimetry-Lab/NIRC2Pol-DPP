@@ -854,6 +854,25 @@ class NIRC2PolarimetryData(PolarimetryData):
                     "misalignment", name, value)
         return int(round(exact_top)), int(round(exact_x))
 
+    def check_background_choice(self, header):
+        """Warn once if the background method suits the band badly.
+
+        Parameters
+        ----------
+        header : Header
+            A frame from the dataset, for reading its band.
+
+        Notes
+        -----
+        L-prime and M sit on a large structured thermal pedestal and need
+        dithers or at least a mean box; in JHK an annulus around the source
+        is usually cleanest. See :data:`RECOMMENDED_BACKGROUND`.
+        """
+        if type(self)._warned_background_choice:
+            return
+        type(self)._warned_background_choice = True
+        check_background_choice(band_of(header), self.background_method)
+
     def occulting_radius(self, header):
         """Occulting mask radius [px] from SLITNAME, or None if unocculted.
 

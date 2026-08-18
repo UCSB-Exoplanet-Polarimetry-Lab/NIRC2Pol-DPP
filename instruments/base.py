@@ -96,6 +96,8 @@ class PolarimetryData(ABC):
     background_box = None                 # (ylow, yhigh, xlow, xhigh)
     background_annulus = None             # (r_inner, r_outer) in pixels
 
+    _warned_background_choice = False
+
     # One-shot warning flags. They are class attributes, so a message is
     # emitted once per class for the life of the *process* -- in a long
     # session (a notebook kernel run twice, a batch over several nights) it
@@ -155,6 +157,25 @@ class PolarimetryData(ABC):
         return subtract_background(stack, self.background_method,
                                    box=self.background_box,
                                    annulus=self.background_annulus)
+
+    def check_background_choice(self, header):
+        """Warn once if the background method suits the band badly.
+
+        Parameters
+        ----------
+        header : Header
+            A frame from the dataset, for reading its band.
+
+        Notes
+        -----
+        Does nothing by default. An instrument that knows which methods suit
+        which of its bands overrides this; one that does not simply stays
+        quiet, which is the honest outcome rather than the silence that came
+        of the caller swallowing every exception.
+
+        Warns once per instrument class, via a ``_warned_*`` flag so that
+        :meth:`reset_warnings` clears it along with the others.
+        """
 
     def describe_background(self):
         """One-line description of the background setting, for provenance."""

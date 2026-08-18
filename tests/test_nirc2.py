@@ -176,3 +176,78 @@ def test_the_cube_builders_default_to_unspecified_not_zero():
             f"{func.__name__} defaults to {default!r}; a literal zero here "
             "silences the uncalibrated-offset warning for every caller who "
             "does not pass one")
+
+
+# --- the band/background check belongs to the instrument -------------------
+
+def test_a_poor_background_choice_for_the_band_warns(caplog):
+    NIRC2PolarimetryData.reset_warnings()
+
+    class Annulus(NIRC2PolarimetryData):
+        background_method = "annulus"
+        background_annulus = (150, 200)
+
+    header = Frame(np.zeros((4, 4)), {"FWINAME": "Lp"}).header
+    with caplog.at_level(logging.WARNING):
+        Annulus().check_background_choice(header)
+    assert any("not recommended" in r.getMessage() for r in caplog.records)
+
+
+def test_the_background_warning_is_resettable(caplog):
+    """It used to be keyed on instrument._bkg_checked, which did not match
+    the _warned_* naming reset_warnings looks for, so this one flag alone
+    could never be cleared."""
+    class Annulus(NIRC2PolarimetryData):
+        background_method = "annulus"
+        background_annulus = (150, 200)
+
+    header = Frame(np.zeros((4, 4)), {"FWINAME": "Lp"}).header
+    Annulus.reset_warnings()
+    with caplog.at_level(logging.WARNING):
+        Annulus().check_background_choice(header)
+        Annulus().check_background_choice(header)
+    first = len([r for r in caplog.records if "not recommended" in r.getMessage()])
+    assert first == 1, "should warn once per class"
+
+    caplog.clear()
+    Annulus.reset_warnings()
+    with caplog.at_level(logging.WARNING):
+        Annulus().check_background_choice(header)
+    assert any("not recommended" in r.getMessage() for r in caplog.records)
+
+
+def test_an_instrument_without_band_knowledge_stays_quiet(caplog):
+    """The caller used to wrap this in except Exception: pass, so a
+    non-NIRC2 instrument got no check and nothing said so. Now the base
+    class simply has nothing to say, which is a different thing."""
+    from instruments.base import PolarimetryData
+
+    class Other(PolarimetryData):
+        name = "other"
+        plate_scale = 0.1
+
+        def gain(self, header):
+            return 1.0
+
+        def saturation_limit(self, header):
+            return 1e9
+
+        def bad_pixel_mask(self):
+            return None
+
+        def sort_frames(self, filenames, **kwargs):
+            return {}
+
+        def north_angle(self, header):
+            return 0.0
+
+        def split_beams(self, frame):
+            return None
+
+        def qu_rotation_angle(self, header, fast_axis_offset=None):
+            return 0.0
+
+    header = Frame(np.zeros((4, 4)), {"FWINAME": "Lp"}).header
+    with caplog.at_level(logging.WARNING):
+        Other().check_background_choice(header)      # must not raise
+    assert not caplog.records

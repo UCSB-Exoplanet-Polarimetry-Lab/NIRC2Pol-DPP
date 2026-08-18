@@ -29,6 +29,7 @@ import logging
 import numpy as np
 
 from utils.angles import mean_angle
+from reduction.registration import register_beam_stack
 
 log = logging.getLogger(__name__)
 
@@ -138,7 +139,6 @@ def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
     ValueError
         If no frame in the cycle sits at this angle.
     """
-    from reduction.registration import register_beam_stack
 
     from .instpol import _annulus
 
@@ -159,19 +159,6 @@ def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
     if not diffs:
         raise ValueError(f"No frames at modulator angle {angle} in cycle")
     return np.nanmean(diffs, axis=0), np.nanmean(sums, axis=0)
-
-
-def _check_background(instrument, cycle):
-    """Warn once if the background setting looks wrong for the band."""
-    if getattr(instrument, "_bkg_checked", False):
-        return
-    instrument._bkg_checked = True
-    try:
-        from instruments.nirc2 import band_of, check_background_choice
-        check_background_choice(band_of(cycle[0].header),
-                                instrument.background_method)
-    except Exception:
-        pass
 
 
 def _check_cycle_exposure(cycle):
@@ -228,7 +215,7 @@ def double_difference(instrument, cycle, critical_angles=CRITICAL_ANGLES,
     a leakage measured per exposure; the two are independent and can be
     combined.
     """
-    _check_background(instrument, cycle)
+    instrument.check_background_choice(cycle[0].header)
     _check_cycle_exposure(cycle)
 
     a_qp, a_qm, a_up, a_um = critical_angles

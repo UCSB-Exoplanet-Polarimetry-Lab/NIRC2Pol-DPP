@@ -17,6 +17,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 from utils.angles import mean_angle
+from reduction.registration import register_beam_stack
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +85,6 @@ def _registered_stacks(instrument, cycle, critical_angles, atol,
     list of ndarray
         One mean ``(2, ny, nx)`` beam stack per critical angle.
     """
-    from reduction.registration import register_beam_stack
     from utils.imutils import crop
 
     from .stokes import _angles_match
