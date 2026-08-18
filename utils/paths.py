@@ -80,6 +80,10 @@ class ObslogPaths:
         self.plots_folder = os.path.join(self.data_folder, "plots")
         self.sequences_folder = os.path.join(self.data_folder, "sequences")
 
+        # everything the reduction logged, in one file beside the products
+        self.log_file = os.path.join(
+            self.data_folder, f"reduction_{self.date}.log")
+
         self.rejects_file = os.path.join(self.data_folder, f"{self.date}_rejects.toml")
         self.table_file = os.path.join(
             self.data_folder, f"{self.date}_reduced_frames_table.txt")

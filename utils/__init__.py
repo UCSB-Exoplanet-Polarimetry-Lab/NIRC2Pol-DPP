@@ -26,4 +26,5 @@ from .imutils import (
 )
 from .angles import (angles_match, is_critical_angle, par_angle,
                      sexagesimal_to_degrees, small_angle_distance)
+from .logs import ReductionLog, start_reduction_log
 from .paths import (ObslogPaths, load_rejects,                     record_reject)
