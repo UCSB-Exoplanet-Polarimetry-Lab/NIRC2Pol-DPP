@@ -15,7 +15,8 @@ each step is easy to run and inspect on its own (e.g. in a notebook):
     4. HWP cycle matching
     5. instrumental polarization and fast axis offset (both measured on sky)
     6. Stokes cubes per cycle -- beam splitting, background subtraction,
-       registration and double differencing all happen inside the builder
+       registration (REGISTER_METHOD) and double differencing all happen
+       inside the builder
     7. median Stokes cube, PI / AoLP / DoLP and radial Stokes, written with
        full provenance by ``ProductWriter``
 
@@ -63,6 +64,26 @@ BACKGROUND_METHOD = "mean_box"        # "mean_box" | "annulus" | "dither" | None
 BACKGROUND_BOX = (25, 350, 50, 400)   # (ylow, yhigh, xlow, xhigh)
 BACKGROUND_ANNULUS = None             # (r_inner, r_outer) px, for "annulus"
 
+# Where the two Wollaston beams sit on the detector. This is per-epoch and
+# has to be measured, not inherited -- the values below are for 2025-12-07.
+# Registration finds one centre on the mean of the two beams and shifts both
+# by it, preserving their relative alignment, so a relative offset between
+# them is never corrected: it goes straight into the double difference as a
+# dipole, inflating U_phi and faking a bright core in Q_phi. Check it by
+# centroiding the star in each beam of one split frame.
+BEAM_TOP_ROW = 504    # first detector row of the top beam
+BEAM_X_OFFSET = 12    # column shift of the top beam relative to the bottom
+
+# Centering algorithm used to register the two beams before differencing.
+# The right choice depends on what the source looks like: "smooth_peak" for a
+# point source, "min" for a saturated core that reads low, "wings" behind a
+# coronagraph, "symmetry"/"centroid" for a resolved body, None to skip. A
+# saturated L-prime core defeats "smooth_peak": its rim maxima are near-equal,
+# so the finder hops between them from frame to frame and the combined PSF
+# comes out doubled. Check by registering every frame and looking at the
+# scatter of the centres it finds.
+REGISTER_METHOD = "min"
+
 # Subtract a master sky from every science frame during reduction. Off by
 # default: combined with a mean-box or annulus background it removes the
 # pedestal twice. Turn it on for dedicated sky frames with
@@ -73,8 +94,10 @@ USE_MASTER_SKIES = False
 # HWP ladder on an internal source returns theta_off + chi/2, where chi is
 # the incident polarization angle in the instrument frame and is unknown for
 # a dome or lamp source. Measure it on sky and set it here, or set
-# FIT_ON_SKY to measure it from these data.
-THETA_OFF = 0.0
+# FIT_ON_SKY to measure it from these data. -13 deg is the value measured on
+# sky for this AB Aur night, consistent across three routes (offset alone,
+# joint with IP, and a scan minimum); it is not a default for other data.
+THETA_OFF = -13.0
 
 # Fit theta_off and the instrumental polarization jointly from the data.
 # Assumes an azimuthally polarized source (a scattered-light disk); on a
@@ -87,14 +110,17 @@ FIT_RADII = (25, 150)   # (r_inner, r_outer) px, the butterfly annulus
 class NightPolData(nirc2.NIRC2PolarimetryData):
     """NIRC2 as configured for this night.
 
-    Same pattern as the notebook's ``LpPolData``: only the background is a
-    per-dataset choice, so it is all this subclass sets. Detector constants,
-    beam geometry and the polarimetric rotation model live on the base class.
+    Same pattern as the notebook's ``LpPolData``: the background and the beam
+    geometry are the per-dataset choices, so they are all this subclass sets.
+    Detector constants and the polarimetric rotation model live on the base
+    class.
     """
 
     background_method = BACKGROUND_METHOD
     background_box = BACKGROUND_BOX
     background_annulus = BACKGROUND_ANNULUS
+    top_row_start = BEAM_TOP_ROW
+    beam_x_offset = BEAM_X_OFFSET
 
 
 instrument = NightPolData()
@@ -102,6 +128,8 @@ paths = ObslogPaths(OBSERVATIONS_FOLDER, DATE)
 paths.make_folders()
 rejects = load_rejects(paths.rejects_file)
 log.info("background: %s", instrument.describe_background())
+log.info("beam geometry: top row %d, x offset %d",
+         instrument.top_row_start, instrument.beam_x_offset)
 
 # --- 1. sort raw frames by type -------------------------------------------
 # *.fits* rather than *.fits so gzipped archive frames are picked up too
@@ -166,7 +194,8 @@ ip = None
 if FIT_ON_SKY:
     r_inner, r_outer = FIT_RADII
     result = fit_fast_axis_on_sky(instrument, cycles,
-                                  r_inner=r_inner, r_outer=r_outer)
+                                  r_inner=r_inner, r_outer=r_outer,
+                                  register_method=REGISTER_METHOD)
     theta_off, ip = result.theta_off, result.ip
     log.info("fast axis on sky: %s", result.describe())
     if ip is not None:
@@ -180,7 +209,8 @@ instrument.fast_axis_offset = theta_off
 # IP is removed in the instrument frame, before Q/U are rotated to sky, so it
 # is an argument here rather than something subtracted from a finished cube.
 stokes_cubes = build_stokes_cubes(instrument, cycles,
-                                  fast_axis_offset=theta_off, ip=ip)
+                                  fast_axis_offset=theta_off, ip=ip,
+                                  register_method=REGISTER_METHOD)
 median_cube = median_stokes_cube(stokes_cubes)
 
 # --- 7. products ----------------------------------------------------------
