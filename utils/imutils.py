@@ -55,10 +55,7 @@ def crop(img, crop_size, center=None):
     Raises
     ------
     ValueError
-        If the requested region falls outside the image. This is deliberate:
-        silently clamping would return an array whose centre is not the
-        centre that was asked for, and every downstream radial measurement
-        would then be quietly wrong.
+        If the requested region falls outside the image
     """
     img = np.asarray(img)
     h, w = img.shape
@@ -138,17 +135,6 @@ def rotate_image_center(img, angle_degrees, fill=np.nan, center=None,
     -------
     ndarray or Frame
         Rotated image, matching the input type.
-
-    Notes
-    -----
-    Two sign conventions are stacked here. This module defines positive as
-    clockwise, while pyklip's positive is counterclockwise, so the call
-    negates the angle. Derotation to north-up is then
-    ``rotate_image_center(img, -north_angle)``.
-
-    The convention has **not** been verified against sky. If a companion at
-    a known position angle ever becomes available, check it — an error here
-    would rotate every product without raising anything.
     """
     from .frame import Frame
 
@@ -282,11 +268,6 @@ def plus_mask(mask, radius=1):
     ``iterations``, where ``0`` does not mean "no dilation" but "repeat
     until nothing changes" — which fills the entire frame. For a
     saturated-pixel mask that would blank the whole detector.
-
-    Notes
-    -----
-    A plus rather than a square because saturated pixels bleed along
-    detector rows and columns, not diagonally.
     """
     cross = ndimage.generate_binary_structure(2, 1)  # 4-connected "+" kernel
     return ndimage.binary_dilation(mask, structure=cross, iterations=radius)

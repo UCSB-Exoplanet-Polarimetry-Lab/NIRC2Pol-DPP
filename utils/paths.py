@@ -117,15 +117,6 @@ class ObslogPaths:
         -------
         set of str
             The distinct dates found in the frames.
-
-        Notes
-        -----
-        A Keck night runs roughly 18:00-06:00 HST, which is 04:00-16:00 UTC
-        the *following* day, so an entire night falls inside one UTC date and
-        that date names it unambiguously. It is one day later than the local
-        evening everyone says out loud, which is exactly how a folder ends up
-        named for the HST evening while every frame inside it is stamped with
-        the next UTC day.
         """
         found = set()
         for frame in frames:
@@ -135,7 +126,7 @@ class ObslogPaths:
         if found and self.date not in found:
             log.warning(
                 "Dataset folder is dated %s but its frames say %s=%s. That "
-                "keyword is UTC, and a Keck night is a single UTC date one "
+                "keyword is UTC, and a Hawai'i night is a single UTC date one "
                 "day after the HST evening -- check which the folder is "
                 "named for, because masters and products inherit this date.",
                 self.date, keyword, ", ".join(sorted(found)))

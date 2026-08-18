@@ -8,9 +8,7 @@ the lot without any of those call sites knowing about it.
 
 What this adds beyond a plain handler is the two things a log needs to be
 worth keeping: a header saying which pipeline version wrote it and when, and
-a footer saying how long it took and how many warnings went by. The count is
-the useful part -- it answers "is there anything in here I need to read?"
-without scrolling.
+a footer saying how long it took and how many warnings went by. 
 """
 
 from __future__ import annotations
@@ -43,9 +41,7 @@ class _WarningCounter(logging.Filter):
 class ReductionLog:
     """A file handler on the root logger, with a header and a footer.
 
-    Use it as a context manager, or call :meth:`finish` yourself -- a script
-    that runs top to bottom should not have to indent under a ``with`` just
-    to get a log.
+    Use it as a context manager, or call :meth:`finish` yourself
 
     Parameters
     ----------

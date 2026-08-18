@@ -6,8 +6,7 @@ HWP position matched no critical angle when compared naively, and the
 arithmetic mean of a cycle straddling a wrap landed 180 deg from the truth.
 Everything here compares and averages angles circularly. It also holds the
 plain spherical-geometry helpers -- sexagesimal parsing, small-angle
-separation, parallactic angle -- which are astronomy rather than instrument
-knowledge and so belong below the instrument layer.
+separation, parallactic angle
 """
 
 import numpy as np
@@ -31,13 +30,6 @@ def angles_match(a, b, atol=1.0, period=180.0):
     -------
     bool
         True if the angles agree within ``atol`` modulo ``period``.
-
-    Notes
-    -----
-    The circular comparison is not decoration. PCUPR reads ``-0.002`` for
-    the nominal 0 deg HWP position; taken modulo 180 that becomes 179.998,
-    and a direct comparison matched none of the critical angles, producing
-    zero usable cycles.
     """
     half = period / 2.0
     return abs((a - b + half) % period - half) <= atol
@@ -81,14 +73,6 @@ def mean_angle(angles, period=360.0):
         The circular mean, returned in the branch nearest ``angles[0]`` so
         it stays continuous with the input rather than being forced into
         ``[0, period)``. NaN for an empty input.
-
-    Notes
-    -----
-    A plain ``np.mean`` is wrong whenever the set straddles a wrap. The
-    AB Aur 2025-12-08 UT data has a cycle whose PARANG runs ``-112.75`` and
-    ``246.94`` — the same direction, 360 deg apart. Unwrapped the second is
-    ``-113.06``, so the true mean is ``-112.905``, while the arithmetic mean
-    of the raw values is ``+67.095``.
     """
     import numpy as np
 

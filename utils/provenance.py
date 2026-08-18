@@ -97,12 +97,6 @@ def drop_step(target, step):
     -------
     int
         How many records were removed.
-
-    Notes
-    -----
-    Preserves HISTORY cards that are not ours, and removes a wrapped step
-    whole -- its continuation cards go with it, or the leftovers would be
-    reattached to whatever step happened to precede them.
     """
     header = getattr(target, "header", target)
     cards = [str(h) for h in header.get("HISTORY", [])]
