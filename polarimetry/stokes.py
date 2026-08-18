@@ -350,6 +350,7 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
     # cube in hand was made.
     record_step(cycle[0], "stokes cube", replace=True,
                 instrument=instrument.name, nframes=len(cycle),
+                beam_geometry=instrument.describe_beam_geometry(),
                 background=instrument.describe_background(),
                 critical_angles=list(critical_angles),
                 registration=register_method,

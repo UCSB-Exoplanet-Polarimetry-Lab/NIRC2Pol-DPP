@@ -1083,3 +1083,84 @@ def fit_2d_gaussian(data, initial_guess, fixed_sigma=None):
     result = least_squares(lambda p: (data - model(p)).ravel(),
                            np.asarray(initial_guess, dtype=float))
     return result.x
+
+def fit_beam_geometry(instrument, frames, top_row_start=None,
+                      beam_x_offset=None, method="centroid", **kwargs):
+    """Measure where the two Wollaston beams sit, from the data.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Supplies ``split_beams`` and the background setting. Its own
+        geometry attributes are not read, so this works before they are set.
+    frames : Frame or sequence of Frame
+        Frames with a bright, compact source. Several are better than one:
+        the sub-pixel offsets are averaged before rounding, which settles a
+        geometry that falls near a half pixel instead of letting each frame
+        round it differently.
+    top_row_start, beam_x_offset : int, optional
+        Where to start looking. Defaults to the instrument's search seed.
+        The search is local but forgiving -- on real data it converges from
+        eleven rows away -- so a neighbouring epoch's numbers are ample.
+    method : str, optional
+        Centering algorithm, as for :func:`measure_beam_offset`.
+    **kwargs
+        Passed to the centering algorithm.
+
+    Returns
+    -------
+    tuple of int
+        ``(top_row_start, beam_x_offset)``, rounded to whole pixels because
+        :meth:`split_beams` slices on integers.
+
+    Notes
+    -----
+    Measured rather than looked up. The separation is a property of this
+    dataset and takes one pass to obtain, so recording values per epoch and
+    trusting them later buys nothing and goes stale silently.
+
+    The background is subtracted before measuring: on a raw thermal-infrared
+    beam a threshold-based centroid finds the pedestal, which is common to
+    both beams, and reports no offset however wrong the geometry is.
+    """
+    # NB: a bare ndarray has no .header, and list() on a 2D array iterates
+    # its rows -- so testing only for the header quietly turns one image
+    # into a list of 1D slices.
+    if hasattr(frames, "header") or isinstance(frames, np.ndarray):
+        frames = [frames]
+    else:
+        frames = list(frames)
+    if not frames:
+        raise ValueError("fit_beam_geometry needs at least one frame")
+
+    seed_top, seed_x = instrument.beam_geometry_seed()
+    top_row_start = seed_top if top_row_start is None else top_row_start
+    beam_x_offset = seed_x if beam_x_offset is None else beam_x_offset
+
+    offsets = []
+    for frame in frames:
+        stack = instrument.subtract_background(
+            instrument.split_beams(frame, top_row_start=top_row_start,
+                                   beam_x_offset=beam_x_offset))
+        offsets.append(measure_beam_offset(stack, method=method, **kwargs))
+
+    dy = float(np.mean([o[0] for o in offsets]))
+    dx = float(np.mean([o[1] for o in offsets]))
+    exact_top, exact_x = top_row_start + dy, beam_x_offset + dx
+
+    log.info("beam geometry measured from %d frame(s): top_row_start=%.2f, "
+             "beam_x_offset=%.2f (scatter %.2f, %.2f px)", len(frames),
+             exact_top, exact_x,
+             float(np.std([o[0] for o in offsets])),
+             float(np.std([o[1] for o in offsets])))
+
+    for name, value in (("top_row_start", exact_top),
+                        ("beam_x_offset", exact_x)):
+        if abs(value - np.floor(value) - 0.5) < 0.15:
+            log.warning(
+                "Measured %s = %.2f sits between pixels, so rounding either "
+                "way leaves about half a pixel of beam misalignment. Compare "
+                "both by reducing with each and seeing which gives less "
+                "U_phi.", name, value)
+
+    return int(round(exact_top)), int(round(exact_x))

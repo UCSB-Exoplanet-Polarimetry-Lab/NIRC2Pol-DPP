@@ -32,6 +32,7 @@ from .registration import (
     center_frames,
     derotate_frames,
     find_center,
+    fit_beam_geometry,
     find_center_centroid,
     find_center_crosscorr,
     find_center_silhouette,

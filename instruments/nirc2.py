@@ -65,146 +65,6 @@ _DETECTOR_SWAP_DATE = _date.fromisoformat(
 POL_HEADER_EPOCH = _date.fromisoformat(
     _CONFIG.get("polarimetry", "pol_header_epoch"))
 
-@dataclass(frozen=True)
-class BeamGeometry:
-    """Where the two Wollaston beams sit on the detector, for one epoch.
-    Currently included as part of data processing until stability is better understood.
-    
-    Attributes
-    ----------
-    label : str
-        Section name from the ``.ini``, for error messages.
-    from_date, to_date : datetime.date
-        Inclusive range this entry was measured over.
-    bands : tuple of str
-        Bands it applies to, as :func:`band_of` reports them.
-    top_row_start : int
-        First detector row of the top beam.
-    beam_x_offset : int
-        Column shift of the top beam relative to the bottom one.
-    measured_from, notes : str
-        Provenance, so a value can be argued with later.
-    """
-
-    label: str
-    from_date: _date
-    to_date: _date
-    bands: tuple
-    top_row_start: int
-    beam_x_offset: int
-    measured_from: str = ""
-    notes: str = ""
-
-    def describe(self):
-        """One-line summary of the entry and where it came from."""
-        return (f"{self.label}: top_row_start={self.top_row_start}, "
-                f"beam_x_offset={self.beam_x_offset} "
-                f"({self.from_date}..{self.to_date}, "
-                f"{'/'.join(self.bands)})"
-                + (f" [{self.measured_from}]" if self.measured_from else ""))
-
-
-def load_beam_geometries(config=None):
-    """Every ``[beam_geometry.*]`` entry in the config, as a tuple.
-
-    Parameters
-    ----------
-    config : ConfigParser, optional
-        Defaults to the shipped instrument file.
-
-    Returns
-    -------
-    tuple of BeamGeometry
-        In file order. Empty is legal: it just means nothing can be looked
-        up and every frame must be configured by hand.
-    """
-    config = _CONFIG if config is None else config
-    out = []
-    for section in config.sections():
-        if not section.startswith("beam_geometry."):
-            continue
-        entry = config[section]
-        out.append(BeamGeometry(
-            label=section.split(".", 1)[1],
-            from_date=_date.fromisoformat(entry["from_date"]),
-            to_date=_date.fromisoformat(entry["to_date"]),
-            bands=tuple(b.strip() for b in entry["bands"].split(",")),
-            top_row_start=int(entry["top_row_start"]),
-            beam_x_offset=int(entry["beam_x_offset"]),
-            measured_from=entry.get("measured_from", ""),
-            notes=" ".join(entry.get("notes", "").split()),
-        ))
-    return tuple(out)
-
-
-BEAM_GEOMETRIES = load_beam_geometries()
-
-
-def beam_geometry_for(header, geometries=None):
-    """Look up the beam geometry for a frame, by observing date and band.
-
-    Parameters
-    ----------
-    header : Header or Frame or mapping
-        Anything with ``DATE-OBS`` and the filter keywords :func:`band_of`
-        reads.
-    geometries : iterable of BeamGeometry, optional
-        Defaults to the entries loaded from the instrument file.
-
-    Returns
-    -------
-    BeamGeometry
-        The single matching entry.
-
-    Raises
-    ------
-    ValueError
-        If no entry matches, or if more than one does. Both refuse rather
-        than pick, because a wrong beam geometry is silent: registration
-        shifts both beams together, so the error survives into the double
-        difference as a dipole instead of showing up as an obvious failure.
-
-    Notes
-    -----
-    Matching is deliberately conservative -- an entry must cover the date
-    *and* list the band. A frame from an unmeasured epoch is meant to stop
-    the reduction, so that someone measures it with
-    :meth:`NIRC2PolarimetryData.fit_beam_geometry` and records it, rather
-    than inheriting a neighbouring epoch's number.
-    """
-    geometries = BEAM_GEOMETRIES if geometries is None else tuple(geometries)
-    date_obs = header.get("DATE-OBS") if hasattr(header, "get") else None
-    if not date_obs:
-        raise ValueError(
-            "cannot look up beam geometry: the frame has no DATE-OBS. Set "
-            "top_row_start and beam_x_offset on the instrument directly.")
-    observed = parse_date_obs(date_obs)
-    band = band_of(header)
-
-    matches = [g for g in geometries
-               if g.from_date <= observed <= g.to_date and band in g.bands]
-    if len(matches) == 1:
-        return matches[0]
-
-    known = "; ".join(g.describe() for g in geometries) or "none"
-    if not matches:
-        raise ValueError(
-            f"no beam geometry recorded for {observed} in band {band!r}. "
-            f"Known entries: {known}. Measure this epoch with "
-            "instrument.fit_beam_geometry(frame, top_guess, x_guess) on a "
-            "frame with a bright compact source and add a "
-            "[beam_geometry.<label>] section to instruments/nirc2.ini. Do "
-            "not borrow a neighbouring epoch's value: it is not known "
-            "whether the separation tracks the date or the band.")
-    raise ValueError(
-        f"{len(matches)} beam geometry entries match {observed} in band "
-        f"{band!r}: {'; '.join(g.label for g in matches)}. Their date ranges "
-        "and bands overlap, so the instrument file is ambiguous; narrow them.")
-
-
-_HWP_IN_OBJECT = re.compile(r"hwp[_-](-?[\d.]+)\s*$", re.IGNORECASE)
-
-
 def predates_pol_headers(header):
     """True if a frame was taken before the polarimetry header keywords
     existed (see :data:`POL_HEADER_EPOCH`)."""
@@ -574,6 +434,16 @@ class NIRC2PolarimetryData(PolarimetryData):
     # them explicitly.
     _announced_beam_geometry = False
 
+    # Where reduction.fit_beam_geometry starts looking. Not a value to
+    # reduce with: the geometry is measured from the data every time.
+    beam_geometry_search = (
+        _CONFIG.getint("beam_geometry", "search_top_row_start"),
+        _CONFIG.getint("beam_geometry", "search_beam_x_offset"))
+
+    def beam_geometry_seed(self):
+        """Starting point for the beam geometry search, as ``(top, xoff)``."""
+        return self.beam_geometry_search
+
     beam_height = 450       # rows in each beam cutout
     bottom_row_start = 0    # bottom beam: rows [0, beam_height)
     top_row_start = None    # top beam: rows [start, start + beam_height)
@@ -721,22 +591,17 @@ class NIRC2PolarimetryData(PolarimetryData):
         Raises
         ------
         ValueError
-            If the geometry is unset and cannot be looked up: either the
-            frame carries no header, or its epoch is not recorded in
-            ``instruments/nirc2.ini``. There is no safe default, because the
-            values drift between epochs and a wrong one misaligns the beams
+            If the geometry is unset. There is no safe default: the values
+            drift between epochs and a wrong one misaligns the beams
             silently.
 
         Notes
         -----
-        When the instrument leaves the geometry unset, it is read from the
-        per-epoch table in ``instruments/nirc2.ini`` using the frame's
-        ``DATE-OBS`` and band (:func:`beam_geometry_for`). That is the
-        intended path: it keeps the measured values in one auditable place
-        instead of copied into every reduction script, where the usual
-        failure is pasting a neighbouring epoch's numbers. Setting the
-        attributes explicitly still wins, so a new epoch can be reduced
-        before anyone edits the file.
+        The geometry has to be set before this is called. It is measured
+        from the data by :func:`reduction.fit_beam_geometry`, which is a
+        standard step of the reduction rather than a value looked up: the
+        separation moves between epochs, and a number written down once goes
+        stale without saying so.
 
         Nothing downstream can undo an error here. Registration shifts both
         beams by a single offset in order to preserve their relative
@@ -748,29 +613,15 @@ class NIRC2PolarimetryData(PolarimetryData):
         beam_x_offset = (self.beam_x_offset if beam_x_offset is None
                          else beam_x_offset)
         if top_row_start is None or beam_x_offset is None:
-            header = getattr(frame, "header", None)
-            if header is None:
-                raise ValueError(
-                    f"{type(self).__name__} has no beam geometry "
-                    f"(top_row_start={top_row_start!r}, "
-                    f"beam_x_offset={beam_x_offset!r}) and this frame is a "
-                    "bare array, so there is no DATE-OBS to look one up "
-                    "with. Pass a Frame so the per-epoch table can be "
-                    "consulted, or set the two attributes on the instrument, "
-                    "measuring them with "
-                    "instrument.fit_beam_geometry(frame, top, xoff). There "
-                    "is deliberately no default: a wrong value misaligns the "
-                    "beams silently and no later step can recover it.")
-            # raises with instructions if this epoch is not in the file
-            geometry = beam_geometry_for(header)
-            if top_row_start is None:
-                top_row_start = geometry.top_row_start
-            if beam_x_offset is None:
-                beam_x_offset = geometry.beam_x_offset
-            if not type(self)._announced_beam_geometry:
-                type(self)._announced_beam_geometry = True
-                log.info("beam geometry from %s -- %s",
-                         os.path.basename(CONFIG_PATH), geometry.describe())
+            raise ValueError(
+                f"{type(self).__name__} has no beam geometry "
+                f"(top_row_start={top_row_start!r}, "
+                f"beam_x_offset={beam_x_offset!r}). It is measured from the "
+                "data rather than defaulted, because the separation moves "
+                "between epochs and a wrong value misaligns the beams in a "
+                "way no later step can undo. Measure it with "
+                "reduction.fit_beam_geometry(instrument, frames) and assign "
+                "the result before reducing.")
 
         # NB: test for the header, not for .data -- every ndarray has a
         # .data attribute (its raw buffer), so keying on that sends plain
@@ -786,73 +637,6 @@ class NIRC2PolarimetryData(PolarimetryData):
         stack[0] = bottom[:, :-beam_x_offset]
         stack[1] = top[:, beam_x_offset:]
         return stack
-
-    def fit_beam_geometry(self, frame, top_row_start, beam_x_offset,
-                          method="centroid", **kwargs):
-        """Refine a trial beam geometry on a frame with a bright, compact
-        source.
-
-        Splits the frame with the trial values, measures how far the star in
-        the top beam sits from the star in the bottom beam, and folds that
-        residual back into the geometry. Iterating is unnecessary: the
-        measurement is a pure translation, so one pass is exact up to the
-        rounding to whole pixels.
-
-        Parameters
-        ----------
-        frame : Frame or ndarray
-            A frame with one bright, compact, unsaturated-or-donut source.
-            The instrument's background setting is applied to the split
-            beams before measuring, so configure it first: on a raw L-prime
-            beam the thermal pedestal swamps the star and the measurement
-            silently returns ~0.
-        top_row_start, beam_x_offset : int
-            Trial geometry to refine. A neighbouring epoch's values are a
-            good starting point; the search is local, so a trial more than
-            about half a PSF away may lock onto the wrong feature.
-        method : str, optional
-            Centering algorithm, as for
-            :func:`reduction.measure_beam_offset`, whose default
-            ``"centroid"`` is used here. This is not the method you
-            register with: ``"smooth_peak"`` reports a different donut rim
-            peak in each beam, and ``"min"`` returns whole pixels, so
-            neither can measure a sub-pixel offset between the beams.
-        **kwargs
-            Passed to the centering algorithm.
-
-        Returns
-        -------
-        tuple of int
-            ``(top_row_start, beam_x_offset)``, rounded to whole pixels
-            because :meth:`split_beams` slices on integers.
-
-        Notes
-        -----
-        Check the result by re-running: a correct geometry measures a
-        residual offset of well under a pixel. On a single bright star the
-        repeatability is ~0.05 px frame to frame, so a residual above ~1 px
-        is real and worth chasing.
-        """
-        from reduction.registration import measure_beam_offset
-        # Subtract the background first.
-        stack = self.subtract_background(
-            self.split_beams(frame, top_row_start=top_row_start,
-                             beam_x_offset=beam_x_offset))
-        dy, dx = measure_beam_offset(stack, method=method, **kwargs)
-        exact_top, exact_x = top_row_start + dy, beam_x_offset + dx
-
-        # The true geometry is rarely an integer, so report what was actually
-        # measured
-        log.info("beam geometry measured at top_row_start=%.2f, "
-                 "beam_x_offset=%.2f", exact_top, exact_x)
-        for name, value in (("top_row_start", exact_top),
-                            ("beam_x_offset", exact_x)):
-            if abs(value - np.floor(value) - 0.5) < 0.15:
-                log.warning(
-                    "Measured %s = %.2f falls between pixels, so rounding it "
-                    "either way leaves about half a pixel of beam "
-                    "misalignment", name, value)
-        return int(round(exact_top)), int(round(exact_x))
 
     def check_background_choice(self, header):
         """Warn once if the background method suits the band badly.
@@ -872,6 +656,18 @@ class NIRC2PolarimetryData(PolarimetryData):
             return
         type(self)._warned_background_choice = True
         check_background_choice(band_of(header), self.background_method)
+
+    def describe_beam_geometry(self):
+        """Where the two beams were cut from, as ``(top_row_start, x_offset)``.
+
+        Returns
+        -------
+        str
+            The pair actually used. It is measured per reduction rather than
+            recorded per epoch, so without this a product could not say
+            which geometry produced it.
+        """
+        return f"({self.top_row_start}, {self.beam_x_offset})"
 
     def occulting_radius(self, header):
         """Occulting mask radius [px] from SLITNAME, or None if unocculted.

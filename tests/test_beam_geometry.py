@@ -7,7 +7,8 @@ import numpy as np
 import pytest
 
 from instruments.nirc2 import NIRC2PolarimetryData
-from reduction import measure_beam_offset, register_beam_stack
+from reduction import (fit_beam_geometry, measure_beam_offset,
+                       register_beam_stack)
 
 BEAM_H, NY, NX = 60, 140, 80
 TOP, XOFF = 70, 5
@@ -99,14 +100,14 @@ def test_alignment_check_can_be_switched_off(caplog):
                                    (TOP, XOFF)])
 def test_fit_beam_geometry_converges_from_a_wrong_trial(trial):
     """One pass is exact: the residual is a pure translation."""
-    assert TinyNIRC2().fit_beam_geometry(detector(), *trial) == (TOP, XOFF)
+    assert fit_beam_geometry(TinyNIRC2(), detector(), *trial) == (TOP, XOFF)
 
 
 def test_fit_beam_geometry_flags_a_half_pixel_tie(caplog):
     """Rounding decides these arbitrarily, so the caller must be told."""
     inst = TinyNIRC2()
     with caplog.at_level(logging.WARNING):
-        inst.fit_beam_geometry(detector(dx=0.5), TOP, XOFF)
+        fit_beam_geometry(inst, detector(dx=0.5), TOP, XOFF)
     assert any("between pixels" in r.getMessage() for r in caplog.records)
 
 
@@ -148,3 +149,44 @@ def test_a_credible_offset_is_still_called_a_misalignment(caplog):
     text = " ".join(r.getMessage() for r in caplog.records)
     assert "Beams are misaligned by" in text
     assert "failed measurement" not in text
+
+
+# --- measured, not looked up ------------------------------------------------
+
+def test_the_seed_is_only_a_starting_point():
+    """A seed several pixels off must reach the same answer, or it is a
+    default in disguise."""
+    answers = {fit_beam_geometry(TinyNIRC2(), detector(), TOP + d, XOFF)
+               for d in (-4, -2, 0, 2, 4)}
+    assert answers == {(TOP, XOFF)}, f"seed-dependent: {answers}"
+
+
+def test_several_frames_are_averaged_before_rounding():
+    """Rounding each frame separately lets a geometry near a half pixel come
+    out differently frame to frame; averaging the sub-pixel offsets first
+    settles it once."""
+    inst = TinyNIRC2()
+    # rounded separately these disagree -- 0.2 gives +0, 1.2 gives +1
+    assert fit_beam_geometry(inst, detector(dx=0.2), TOP, XOFF) == (TOP, XOFF)
+    assert fit_beam_geometry(inst, detector(dx=1.2), TOP, XOFF) == (TOP, XOFF + 1)
+
+    # averaged first, 0.7 rounds once, to +1
+    combined = fit_beam_geometry(inst, [detector(dx=0.2), detector(dx=1.2)],
+                                 TOP, XOFF)
+    assert combined == (TOP, XOFF + 1)
+
+
+def test_a_single_frame_is_accepted_as_well_as_a_list():
+    """A bare ndarray has no .header, and list() on a 2D array iterates its
+    rows -- so a naive check turns one image into a list of 1D slices."""
+    one = fit_beam_geometry(TinyNIRC2(), detector(), TOP, XOFF)
+    listed = fit_beam_geometry(TinyNIRC2(), [detector()], TOP, XOFF)
+    assert one == listed
+
+
+def test_the_instrument_describes_the_geometry_it_used():
+    """Measured per reduction, so a product cannot be reproduced unless it
+    records which values produced it."""
+    inst = TinyNIRC2()
+    assert str(TOP) in inst.describe_beam_geometry()
+    assert str(XOFF) in inst.describe_beam_geometry()

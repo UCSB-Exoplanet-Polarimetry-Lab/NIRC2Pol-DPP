@@ -12,7 +12,7 @@ each step is easy to run and inspect on its own (e.g. in a notebook):
     1. sort raw frames by type (headers)
     2. build master darks / flats / skies
     3. pre-process science frames (dark, flat, bad pixels)
-    4. HWP cycle matching
+    4. measure the beam geometry, then HWP cycle matching
     5. instrumental polarization and fast axis offset (both measured on sky)
     6. Stokes cubes per cycle -- beam splitting, background subtraction,
        registration (REGISTER_METHOD) and double differencing all happen
@@ -43,7 +43,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from instruments import nirc2
 from polarimetry import (ProductWriter, build_stokes_cubes,
                          fit_fast_axis_on_sky, median_stokes_cube)
-from reduction import (make_master_darks, make_master_flats,
+from reduction import (fit_beam_geometry, make_master_darks,
+                       make_master_flats,
                        make_master_masks, make_master_skies, reduce_frame)
 from utils import ObslogPaths, load_frames, load_rejects, save_frames
 
@@ -66,20 +67,10 @@ BACKGROUND_METHOD = "mean_box"        # "mean_box" | "annulus" | "dither" | None
 BACKGROUND_BOX = (25, 350, 50, 400)   # (ylow, yhigh, xlow, xhigh)
 BACKGROUND_ANNULUS = None             # (r_inner, r_outer) px, for "annulus"
 
-# Where the two Wollaston beams sit on the detector. This is per-epoch and
-# has to be measured, not inherited -- the values below are for 2025-12-08.
-# Registration finds one centre on the mean of the two beams and shifts both
-# by it, preserving their relative alignment, so a relative offset between
-# them is never corrected: it goes straight into the double difference as a
-# dipole, inflating U_phi and faking a bright core in Q_phi. There is no
-# default to fall back on -- split_beams raises until these are set. Measure
-# them with instrument.fit_beam_geometry(frame, top_guess, x_guess), starting
-# from a neighbouring epoch; register_beam_stack also re-checks on every call
-# and warns if the two beams disagree.
-# None looks the epoch up in instruments/nirc2.ini by DATE-OBS and band, which
-# is the normal path. Set them only to reduce an epoch not yet in that file.
-BEAM_TOP_ROW = None   # first detector row of the top beam
-BEAM_X_OFFSET = None  # column shift of the top beam relative to the bottom
+# Beam geometry is measured from the data in step 4, not configured here.
+# Set these only to override the measurement for a reduction.
+BEAM_TOP_ROW = None
+BEAM_X_OFFSET = None
 
 # Centering algorithm used to register the two beams before differencing.
 # The right choice depends on what the source looks like: "smooth_peak" for a
@@ -197,6 +188,17 @@ for frame in sci_frames:
     reduced_frames.append(reduced)
 
 # --- 4. HWP cycle matching ------------------------------------------------
+# Measure where the two beams sit, from these frames. The separation moves
+# between epochs, so it is measured every time rather than looked up: a
+# value written down once goes stale without saying so. Nothing downstream
+# can undo a wrong one -- registration shifts both beams together -- so
+# split_beams refuses until this has run.
+if instrument.top_row_start is None or instrument.beam_x_offset is None:
+    instrument.top_row_start, instrument.beam_x_offset = fit_beam_geometry(
+        instrument, reduced_frames)
+log.info("beam geometry: top row %d, x offset %d",
+         instrument.top_row_start, instrument.beam_x_offset)
+
 cycles = instrument.match_modulator_cycles(reduced_frames)
 
 # --- 5. fast axis offset and instrumental polarization --------------------

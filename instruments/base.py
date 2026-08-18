@@ -177,6 +177,24 @@ class PolarimetryData(ABC):
         :meth:`reset_warnings` clears it along with the others.
         """
 
+    def describe_beam_geometry(self):
+        """One-line description of how the beams were cut out, for provenance.
+
+        Returns
+        -------
+        str
+            Empty by default. An instrument whose beam extraction is
+            configurable should say what it used, since a product cannot be
+            reproduced without it.
+
+        Notes
+        -----
+        A method rather than the caller reading attributes: how the two
+        beams are separated is the instrument's business, and another one
+        may not describe it with rows and columns at all.
+        """
+        return ""
+
     def describe_background(self):
         """One-line description of the background setting, for provenance."""
         if self.background_method is None:
