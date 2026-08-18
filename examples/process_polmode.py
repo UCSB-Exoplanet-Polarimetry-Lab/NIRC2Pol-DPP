@@ -194,7 +194,6 @@ for frame in sci_frames:
         gain=instrument.gain(frame),
         saturation_limit=instrument.saturation_limit(frame),
     )
-    reduced["RDNOISE"] = instrument.readnoise(reduced)
     reduced.save(os.path.join(paths.reduced_folder, reduced["RED-FN"]))
     reduced_frames.append(reduced)
 
