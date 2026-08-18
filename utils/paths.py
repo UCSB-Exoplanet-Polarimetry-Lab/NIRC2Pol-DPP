@@ -20,6 +20,8 @@ import logging
 import os
 from dataclasses import dataclass, field
 
+from utils.frame import parse_date_obs
+
 
 log = logging.getLogger(__name__)
 
@@ -121,8 +123,11 @@ class ObslogPaths:
         named for the HST evening while every frame inside it is stamped with
         the next UTC day.
         """
-        found = {str(f.get(keyword, "")).strip()[:10] for f in frames}
-        found.discard("")
+        found = set()
+        for frame in frames:
+            raw = str(frame.get(keyword, "")).strip()
+            if raw:
+                found.add(parse_date_obs(raw).isoformat())
         if found and self.date not in found:
             log.warning(
                 "Dataset folder is dated %s but its frames say %s=%s. That "

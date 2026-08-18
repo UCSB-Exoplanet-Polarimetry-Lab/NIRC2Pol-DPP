@@ -16,9 +16,12 @@ from configparser import ConfigParser
 from dataclasses import dataclass, field
 from datetime import date as _date
 from instruments.base import read_config, config_csv
+from utils.angles import (par_angle, sexagesimal_to_degrees,
+                          small_angle_distance)
+from utils.frame import parse_date_obs
+from utils.imutils import load_bad_pixel_mask as _load_bad_pixel_mask
 
 import numpy as np
-from astropy.io import fits
 
 log = logging.getLogger(__name__)
 
@@ -179,7 +182,7 @@ def beam_geometry_for(header, geometries=None):
         raise ValueError(
             "cannot look up beam geometry: the frame has no DATE-OBS. Set "
             "top_row_start and beam_x_offset on the instrument directly.")
-    observed = _parse_date(date_obs)
+    observed = parse_date_obs(date_obs)
     band = band_of(header)
 
     matches = [g for g in geometries
@@ -213,7 +216,7 @@ def predates_pol_headers(header):
     if not date_obs:
         return False
     try:
-        return _parse_date(date_obs) < POL_HEADER_EPOCH
+        return parse_date_obs(date_obs) < POL_HEADER_EPOCH
     except Exception:
         return False
 
@@ -243,14 +246,9 @@ def check_pol_headers(header, strict=False):
     return False
 
 
-def _parse_date(date_obs):
-    """Parse a DATE-OBS string like '2025-12-04'."""
-    return _date.fromisoformat(str(date_obs)[:10])
-
-
 def get_gain(date_obs):
     """Detector gain in photoelectrons per ADU, either side of the swap."""
-    before = _parse_date(date_obs) < _DETECTOR_SWAP_DATE
+    before = parse_date_obs(date_obs) < _DETECTOR_SWAP_DATE
     return _CONFIG.getfloat("detector",
                             "gain_before" if before else "gain_after")
 
@@ -265,15 +263,26 @@ def get_readnoise(sampmode):
 
 def get_saturation_limit(date_obs):
     """Saturation / linearity limit in ADU, either side of the swap."""
-    before = _parse_date(date_obs) < _DETECTOR_SWAP_DATE
+    before = parse_date_obs(date_obs) < _DETECTOR_SWAP_DATE
     return _CONFIG.getfloat(
         "detector", "saturation_before" if before else "saturation_after")
 
 
 def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
-    """Load the static NIRC2 bad pixel mask as a boolean array."""
-    with fits.open(path) as hdul:
-        return np.asarray(hdul[0].data, dtype=bool)
+    """Load the static NIRC2 bad pixel mask as a boolean array.
+
+    Parameters
+    ----------
+    path : str, optional
+        FITS file to read. Defaults to the mask shipped with the package.
+
+    Returns
+    -------
+    ndarray of bool
+        The mask. The reading is :func:`utils.imutils.load_bad_pixel_mask`;
+        the only NIRC2-specific part is which file.
+    """
+    return _load_bad_pixel_mask(path)
 
 
 #
@@ -282,24 +291,6 @@ def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
 
 # deg; dome flats are always taken at this elevation
 FLAT_ELEVATION = _CONFIG.getfloat("instrument", "flat_elevation")
-
-
-def _small_angle_distance(a, b):
-    """Angular distance between two (ra, dec) pairs in degrees.
-
-    Parameters
-    ----------
-    a, b : tuple of float
-        ``(ra, dec)`` pairs in degrees.
-
-    Returns
-    -------
-    float
-        Small-angle separation in degrees.
-    """
-    (ra_a, dec_a), (ra_b, dec_b) = a, b
-    return np.sqrt(((ra_a - ra_b) * np.cos(np.deg2rad(dec_a))) ** 2
-                   + (dec_a - dec_b) ** 2)
 
 
 def _at_flat_position(frame, arcsec_threshold):
@@ -318,7 +309,7 @@ def _at_flat_position(frame, arcsec_threshold):
         True when the elevation is at the flat-field position, both AO loops
         are open or idle, and the shutter is open.
     """
-    distance_arcsec = 3600.0 * _small_angle_distance(
+    distance_arcsec = 3600.0 * small_angle_distance(
         (0.0, FLAT_ELEVATION), (0.0, frame["EL"]))
     dm_open = str(frame["WCDMSTAT"]).lower() in ("open", "idle")
     dt_open = str(frame["WCDTSTAT"]).lower() in ("open", "idle")
@@ -433,45 +424,6 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
 ZP_OFFSET = _CONFIG.getfloat("instrument", "zp_offset")
 
 
-def _ten(value):
-    """Sexagesimal string ('HH:MM:SS.S' or '+DD:MM:SS') to decimal float."""
-    if isinstance(value, (int, float)):
-        return float(value)
-    parts = str(value).strip().split(":")
-    sign = -1.0 if parts[0].strip().startswith("-") else 1.0
-    numbers = [abs(float(p)) for p in parts]
-    return sign * sum(n / 60.0**i for i, n in enumerate(numbers))
-
-
-def par_angle(hour_angle, dec, lat):
-    """Parallactic angle [deg] from hour angle [hours], declination [deg],
-        and latitude [deg]. Source: pyKLIP.
-
-    Parameters
-    ----------
-    ha : float
-        Hour angle in degrees.
-    dec : float
-        Declination in degrees.
-    lat : float
-        Observatory latitude in degrees.
-
-    Returns
-    -------
-    float
-        Parallactic angle in degrees.
-    """
-    ha_rad = np.deg2rad(hour_angle * 15.0)
-    dec_rad = np.deg2rad(dec)
-    lat_rad = np.deg2rad(lat)
-
-    parallang = -np.arctan2(
-        -np.sin(ha_rad),
-        np.cos(dec_rad) * np.tan(lat_rad) - np.sin(dec_rad) * np.cos(ha_rad),
-    )
-    return np.rad2deg(parallang)
-
-
 def calculate_north_angle(header):
     """Angle to north [deg] for a NIRC2 narrow-camera frame, including the
     smearing of the parallactic angle over the exposure.
@@ -508,7 +460,7 @@ def calculate_north_angle(header):
     sampmode = header["SAMPMODE"]
     multisam = header["MULTISAM"]
     naxis1 = header["NAXIS1"]
-    dec = _ten(header["DEC"]) + header["DECOFF"]
+    dec = sexagesimal_to_degrees(header["DEC"]) + header["DECOFF"]
 
     if "TOTEXP" in header:
         totexp = header["TOTEXP"]
@@ -522,7 +474,7 @@ def calculate_north_angle(header):
     totexp_hours = totexp / 3600.0
 
     # hour angle at the start of the exposure
-    ha_hours = 24.0 * _ten(header["HA"]) / 360.0
+    ha_hours = 24.0 * sexagesimal_to_degrees(header["HA"]) / 360.0
 
     if totexp <= 1.0:  # under a second: no appreciable smear
         return pa_deg, [pa_deg]

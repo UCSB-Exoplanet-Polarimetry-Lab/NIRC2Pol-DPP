@@ -10,6 +10,7 @@ Conventions: arrays are indexed ``data[y, x]`` and coordinates are given as
 from __future__ import annotations
 
 import numpy as np
+from astropy.io import fits
 from scipy import ndimage
 
 
@@ -320,3 +321,27 @@ def argquantile(img, quantile):
     return np.unravel_index(flat_idx, img.shape)
 
 
+
+
+def load_bad_pixel_mask(path):
+    """Load a static detector bad-pixel mask as a boolean array.
+
+    Parameters
+    ----------
+    path : str
+        FITS file whose primary HDU holds the mask. Anything non-zero is
+        bad.
+
+    Returns
+    -------
+    ndarray of bool
+        The mask.
+
+    Notes
+    -----
+    Nothing here is instrument-specific: which file to read is the
+    instrument's business, reading it is not. See
+    ``instruments.nirc2.load_bad_pixel_mask`` for the NIRC2 default.
+    """
+    with fits.open(path) as hdul:
+        return np.asarray(hdul[0].data, dtype=bool)

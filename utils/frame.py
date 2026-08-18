@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 
 import logging
+from datetime import date as _date
 
 import numpy as np
 from astropy.io import fits
@@ -362,3 +363,31 @@ def get_between(frames, frameno_range):
     """
     lo, hi = frameno_range
     return [f for f in frames if lo <= f["FRAMENO"] <= hi]
+
+
+def parse_date_obs(date_obs):
+    """Parse a FITS ``DATE-OBS`` value into a date.
+
+    Parameters
+    ----------
+    date_obs : str or datetime.date
+        Either a bare date, ``'2025-12-08'``, or a full timestamp,
+        ``'2025-12-08T09:38:16.614'``. Only the first ten characters are
+        read, so both work.
+
+    Returns
+    -------
+    datetime.date
+        The observing date. NIRC2 records DATE-OBS in UTC, and a Keck night
+        runs 04:00-16:00 UTC, so one UTC date names a whole night.
+
+    Raises
+    ------
+    ValueError
+        If the value is not a parseable date. Empty or missing values are
+        the caller's to handle -- guessing a date would be worse than
+        stopping.
+    """
+    if isinstance(date_obs, _date):
+        return date_obs
+    return _date.fromisoformat(str(date_obs)[:10])

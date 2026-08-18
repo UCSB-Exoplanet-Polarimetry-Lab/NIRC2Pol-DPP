@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 from utils.angles import angles_match, is_critical_angle, mean_angle
+from utils.angles import (par_angle, sexagesimal_to_degrees,
+                          small_angle_distance)
 
 
 def test_angles_match_across_the_wrap():
@@ -81,3 +83,51 @@ def test_mean_angle_period_180():
     """With period 180, 179 and 1 average to 0, not 90."""
     got = mean_angle([179.0, 1.0], period=180.0)
     assert abs((got - 0.0 + 90.0) % 180.0 - 90.0) < 1e-6
+
+
+# --- spherical helpers, moved down from instruments/nirc2.py ---------------
+
+@pytest.mark.parametrize("value, expected", [
+    ("12:30:00", 12.5),
+    ("+12:30:00", 12.5),
+    ("-12:30:00", -12.5),
+    ("00:30:00", 0.5),
+    (7.25, 7.25),          # already decimal, passes through
+])
+def test_sexagesimal_to_degrees(value, expected):
+    assert sexagesimal_to_degrees(value) == pytest.approx(expected)
+
+
+def test_sexagesimal_sign_survives_a_zero_leading_field():
+    """float('-00') is 0.0, so a naive parser loses the sign on declinations
+    between 0 and -1 -- and would put a source in the wrong hemisphere."""
+    assert sexagesimal_to_degrees("-00:30:00") == pytest.approx(-0.5)
+
+
+def test_small_angle_distance_scales_ra_by_cos_dec():
+    """One degree of RA is less than one degree on the sky away from the
+    equator; ignoring cos(dec) is a classic way to mis-measure a separation."""
+    assert small_angle_distance((0.0, 0.0), (1.0, 0.0)) == pytest.approx(1.0)
+    assert small_angle_distance((0.0, 60.0), (1.0, 60.0)) == pytest.approx(0.5)
+    assert small_angle_distance((10.0, 5.0), (10.0, 5.0)) == pytest.approx(0.0)
+
+
+def test_par_angle_is_zero_on_the_meridian():
+    """A source due south at transit has no parallactic rotation."""
+    assert par_angle(0.0, 10.0, 19.82525) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_par_angle_flips_sign_across_the_meridian():
+    """East and west of the meridian rotate oppositely, which is what makes
+    the field rotate through a night."""
+    east = par_angle(-1.0, 10.0, 19.82525)
+    west = par_angle(+1.0, 10.0, 19.82525)
+    assert east == pytest.approx(-west)
+    assert east != pytest.approx(0.0)
+
+
+def test_par_angle_takes_hours_not_degrees():
+    """The signature says hour_angle and the body multiplies by 15. Passing
+    degrees would be silently wrong by a factor of 15."""
+    assert par_angle(6.0, 0.0, 0.0) == pytest.approx(
+        par_angle(90.0 / 15.0, 0.0, 0.0))
