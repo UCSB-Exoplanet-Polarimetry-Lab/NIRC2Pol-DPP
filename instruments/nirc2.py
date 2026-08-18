@@ -18,8 +18,7 @@ from datetime import date as _date
 from instruments.base import read_config, config_csv
 from utils.angles import (par_angle, sexagesimal_to_degrees,
                           small_angle_distance)
-from utils.frame import parse_date_obs
-from utils.imutils import load_bad_pixel_mask as _load_bad_pixel_mask
+from utils.frame import Frame, parse_date_obs
 
 import numpy as np
 
@@ -279,10 +278,15 @@ def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
     Returns
     -------
     ndarray of bool
-        The mask. The reading is :func:`utils.imutils.load_bad_pixel_mask`;
-        the only NIRC2-specific part is which file.
+        The mask, anything non-zero being bad.
+
+    Notes
+    -----
+    Reading is :meth:`utils.Frame.load`, which already handles gzip and the
+    primary HDU; the only NIRC2-specific part is which file, so there is no
+    second loader to keep in step with the first.
     """
-    return _load_bad_pixel_mask(path)
+    return Frame.load(path).data.astype(bool)
 
 
 #

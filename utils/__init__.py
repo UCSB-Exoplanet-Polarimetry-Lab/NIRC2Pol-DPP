@@ -19,7 +19,6 @@ from .imutils import (
     image_is_larger,
     make_annulus_mask,
     make_circle_mask,
-    load_bad_pixel_mask,
     make_sigma_clip_mask,
     plus_mask,
     rotate_image_center,
