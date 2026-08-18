@@ -33,11 +33,6 @@ PLATE_SCALE = _CONFIG.getfloat("instrument", "plate_scale")
 OBSERVATORY_LAT = _CONFIG.getfloat("observatory", "latitude")
 OBSERVATORY_LON = _CONFIG.getfloat("observatory", "longitude")
 
-# narrowband filters with no flats of their own -> acceptable substitutes
-# (passed to reduction.calibrate.find_closest_flat / reduce_frame)
-FLAT_EXCEPTIONS = {key: config_csv(_CONFIG, "flat_exceptions", key)
-                   for key in _CONFIG["flat_exceptions"]}
-
 # Which flat type each band requires, and the fallback for unlisted bands.
 DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG.get("flat_type", "default_flat_type")
 REQUIRED_FLAT_TYPE_BY_BAND = {
@@ -53,7 +48,9 @@ _DEFAULT_BAD_PIXEL_MASK = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "masks",
     "bad_pixel_mask_20230101.fits")
 
-# the detector was replaced in late 2023, changing gain and well depth
+# the detector was replaced in late 2023, changing gain. 
+# no data for pol mode should be from before this date, but we have the safeguard there just in case someone wants to use the basic
+# functions in the DPP to analyze older data.
 _DETECTOR_SWAP_DATE = _date.fromisoformat(
     _CONFIG.get("detector", "swap_date"))
 
@@ -69,7 +66,8 @@ POL_HEADER_EPOCH = _date.fromisoformat(
 @dataclass(frozen=True)
 class BeamGeometry:
     """Where the two Wollaston beams sit on the detector, for one epoch.
-
+    Currently included as part of data processing until stability is better understood.
+    
     Attributes
     ----------
     label : str
@@ -84,14 +82,6 @@ class BeamGeometry:
         Column shift of the top beam relative to the bottom one.
     measured_from, notes : str
         Provenance, so a value can be argued with later.
-
-    Notes
-    -----
-    An entry claims only the date range *and* the bands it was actually
-    measured under, because it is not established whether the separation
-    tracks the date (mechanical drift) or the band (a Wollaston splits by
-    wavelength, so a dispersive separation is plausible). Keying on one and
-    guessing the other would manufacture confidence that has not been earned.
     """
 
     label: str
