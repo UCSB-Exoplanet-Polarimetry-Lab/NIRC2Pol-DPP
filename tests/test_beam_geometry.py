@@ -108,3 +108,43 @@ def test_fit_beam_geometry_flags_a_half_pixel_tie(caplog):
     with caplog.at_level(logging.WARNING):
         inst.fit_beam_geometry(detector(dx=0.5), TOP, XOFF)
     assert any("between pixels" in r.getMessage() for r in caplog.records)
+
+
+def test_crop_does_not_change_the_measured_offset():
+    """The same box is cut from both beams, so the difference must survive."""
+    stack = TinyNIRC2().split_beams(detector(dy=3.0, dx=-1.5))
+    full = measure_beam_offset(stack)
+    cropped = measure_beam_offset(stack, crop_size=40)
+    assert cropped[0] == pytest.approx(full[0], abs=0.05)
+    assert cropped[1] == pytest.approx(full[1], abs=0.05)
+
+
+def test_crop_falls_back_when_the_box_does_not_fit():
+    """A box larger than the beam must not cost us the check entirely."""
+    stack = TinyNIRC2().split_beams(detector(dy=3.0, dx=0.0))
+    assert measure_beam_offset(stack, crop_size=10_000)[0] == pytest.approx(
+        3.0, abs=0.15)
+
+
+def test_implausible_offset_is_a_failed_measurement_not_a_misalignment(caplog):
+    """Two beams of one field cannot really be 120 px apart; saying
+    "misaligned" there would send someone hunting a geometry bug that is
+    actually a centering failure."""
+    scene = np.zeros((300, 300))
+    scene[145:155, 145:155] = 1000.0
+    stack = np.stack([scene, np.roll(scene, 120, axis=0)])
+    with caplog.at_level(logging.WARNING):
+        register_beam_stack(stack, method="centroid")
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "failed measurement" in text
+    assert "Beams are misaligned by" not in text
+
+
+def test_a_credible_offset_is_still_called_a_misalignment(caplog):
+    """The cutoff must not swallow the errors the guard exists to catch."""
+    stack = TinyNIRC2().split_beams(detector(dy=4.0, dx=0.0))
+    with caplog.at_level(logging.WARNING):
+        register_beam_stack(stack, method="centroid")
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "Beams are misaligned by" in text
+    assert "failed measurement" not in text
