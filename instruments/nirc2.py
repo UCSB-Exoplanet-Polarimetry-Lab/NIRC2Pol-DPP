@@ -430,8 +430,9 @@ class NIRC2PolarimetryData(PolarimetryData):
     # enters the model with a factor 2, not 4
     rotator_keyword = "ROTPDEST"
 
-    # Beam extraction geometry (detector rows/columns). Measure per epoch with :meth:`fit_beam_geometry` and set
-    # them explicitly.
+    # Beam extraction geometry (detector rows/columns). Measured from the
+    # data by :func:`reduction.fit_beam_geometry` and assigned before
+    # anything splits the beams.
     _announced_beam_geometry = False
 
     # Where reduction.fit_beam_geometry starts looking. Not a value to

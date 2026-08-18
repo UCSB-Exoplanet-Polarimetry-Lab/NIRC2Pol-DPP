@@ -882,7 +882,7 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0,
                     "measurement rather than a misalignment: %r centering "
                     "has most likely not found the same source in both "
                     "beams. The geometry may still be wrong -- check it with "
-                    "instrument.fit_beam_geometry.", dy, dx,
+                    "reduction.fit_beam_geometry(instrument, frames).", dy, dx,
                     beam_alignment_method)
             elif offset > beam_alignment_tol:
                 log.warning(
@@ -890,9 +890,9 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0,
                     "the %.2f px tolerance: the beam extraction geometry is "
                     "probably wrong. Registration shifts both beams "
                     "together, so this offset will survive into the double "
-                    "difference as a dipole. Add these to the instrument's "
-                    "top_row_start and beam_x_offset (see "
-                    "instrument.fit_beam_geometry), or pass "
+                    "difference as a dipole. Re-measure with "
+                    "reduction.fit_beam_geometry(instrument, frames) and "
+                    "assign the result, or pass "
                     "check_beam_alignment=False if the source is one that "
                     "%r centering cannot locate per beam.",
                     dy, dx, beam_alignment_tol, beam_alignment_method)
