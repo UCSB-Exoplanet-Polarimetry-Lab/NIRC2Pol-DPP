@@ -158,7 +158,10 @@ def record_step(target, step, replace=False, **params):
     -----
     Appends a HISTORY card of the form::
 
-        DPP <step>: key=value, key=value   [2026-07-29T04:12:33]
+        DPP <step>: key=value, key=value   [2026-07-29T04:12:33Z]
+
+    The timestamp is UTC, with the trailing ``Z`` saying so, to match the
+    UTC in every NIRC2 header keyword.
 
     and stamps ``DPPVER`` and ``DPPDATE`` once, on first use. Lines longer
     than a HISTORY card's payload are wrapped across several cards rather
@@ -170,13 +173,18 @@ def record_step(target, step, replace=False, **params):
     if replace:
         drop_step(header, step)
 
+    # UTC, and marked as such. Everything else in a NIRC2 product is UTC --
+    # DATE-OBS, UT, MJD -- and a naive local timestamp cannot be compared
+    # with any of them, or with the same product reduced on another machine.
+    now = datetime.datetime.now(datetime.timezone.utc)
+
     if "DPPVER" not in header:
         header["DPPVER"] = (pipeline_version(), "NIRC2Pol-DPP version")
-        header["DPPDATE"] = (datetime.datetime.now().isoformat(timespec="seconds"),
-                             "pipeline processing date")
+        header["DPPDATE"] = (now.isoformat(timespec="seconds"),
+                             "pipeline processing date (UTC)")
 
     detail = ", ".join(f"{k}={_format_value(v)}" for k, v in params.items())
-    stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     text = f"{_STEP_PREFIX}{step}: {detail} [{stamp}]" if detail \
         else f"{_STEP_PREFIX}{step} [{stamp}]"
 

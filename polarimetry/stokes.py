@@ -416,7 +416,7 @@ def radial_stokes(Q, U, center=None):
 
         Disk signal is positive in Q_phi while U_phi contains noise. This sign
         convention was verified empirically on the AB Aur commissioning data
-        (2025-12-07 L'): with these signs the tangentially-polarized disk comes
+        (2025-12-08 UT L'): with these signs the tangentially-polarized disk comes
         out positive, matching the notebook cell that produced the reference
         qphi_median. (The IRDAP-style ``-Q cos - U sin`` form gives *negative*
         disk signal for this instrument's image parity — don't "fix" the sign

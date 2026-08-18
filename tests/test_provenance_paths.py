@@ -1,5 +1,7 @@
 """The audit trail: provenance headers, and the reject list."""
 
+import datetime
+import logging
 import os
 
 import numpy as np
@@ -193,3 +195,38 @@ def test_masters_record_how_they_were_built():
     assert "dark combination" in step[0]
     assert "nframes=3" in step[0]
     assert "DPPVER" in masters[0].header, "no pipeline version on the master"
+
+
+def test_provenance_timestamps_are_utc():
+    """Every other date in a NIRC2 product is UTC. A naive local stamp
+    cannot be compared with any of them, nor with the same product reduced
+    on a machine in another timezone."""
+    header = fits.Header()
+    record_step(header, "test step", a=1)
+
+    stamped = datetime.datetime.fromisoformat(header["DPPDATE"])
+    assert stamped.tzinfo is not None, "the stamp does not say which zone"
+    assert stamped.utcoffset() == datetime.timedelta(0)
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    assert abs((now - stamped).total_seconds()) < 300, \
+        "stamp is not the current UTC time (local time would show as an offset)"
+    assert steps_of(header)[0].rstrip("]").endswith("Z"), \
+        "the step timestamp should be marked UTC"
+
+
+def test_a_folder_dated_for_the_hst_evening_is_flagged(caplog):
+    """A Keck night is one UTC date, one day after the local evening. Naming
+    the folder for the evening is how that drifts, and masters and products
+    inherit the folder's date."""
+    frames = [Frame(np.zeros((2, 2)), {"DATE-OBS": "2025-12-08"})]
+
+    with caplog.at_level(logging.WARNING):
+        found = ObslogPaths("/data", "2025-12-07").check_frame_dates(frames)
+    assert found == {"2025-12-08"}
+    assert "2025-12-08" in " ".join(r.getMessage() for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        ObslogPaths("/data", "2025-12-08").check_frame_dates(frames)
+    assert not caplog.records, "the matching date must not warn"

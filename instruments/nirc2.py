@@ -682,7 +682,7 @@ class NIRC2PolarimetryData(PolarimetryData):
     # preserve their relative alignment, and the double difference turns the
     # offset into a dipole that inflates U_phi and fakes a bright core in
     # Q_phi. Measure them per epoch with :meth:`fit_beam_geometry` and set
-    # them explicitly. Known values: 2025-12-07 L' = (504, 12),
+    # them explicitly. Known values: 2025-12-08 UT L' = (504, 12),
     # 2026 H = (536, 14).
     _announced_beam_geometry = False
 

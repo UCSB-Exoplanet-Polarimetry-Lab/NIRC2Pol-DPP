@@ -53,7 +53,9 @@ log = logging.getLogger("process_polmode")
 # ---------------------------------------------------------------------------
 # configuration
 OBSERVATIONS_FOLDER = "/path/to/data_polmode"  # contains <date>/raw/*.fits
-DATE = "2025-12-07"
+# UTC, as DATE-OBS records it. A Keck night runs 04:00-16:00 UTC, so one
+# UTC date names a whole night -- one day after the HST evening.
+DATE = "2025-12-08"
 TARGET = "AB_Aur"
 
 # Background, applied per Wollaston beam inside build_stokes_cubes. The band
@@ -65,7 +67,7 @@ BACKGROUND_BOX = (25, 350, 50, 400)   # (ylow, yhigh, xlow, xhigh)
 BACKGROUND_ANNULUS = None             # (r_inner, r_outer) px, for "annulus"
 
 # Where the two Wollaston beams sit on the detector. This is per-epoch and
-# has to be measured, not inherited -- the values below are for 2025-12-07.
+# has to be measured, not inherited -- the values below are for 2025-12-08.
 # Registration finds one centre on the mean of the two beams and shifts both
 # by it, preserving their relative alignment, so a relative offset between
 # them is never corrected: it goes straight into the double difference as a
@@ -179,6 +181,9 @@ master_masks = make_master_masks(dark_masks, flat_masks)
 
 # --- 3. pre-process science frames ----------------------------------------
 sci_frames = load_frames(sorted_files["sci"], rejects=rejects)
+# DATE above must be the UTC date the frames carry, since the masters and
+# every product inherit it from the folder name
+paths.check_frame_dates(sci_frames)
 nirc2.make_frametable(sci_frames, paths.table_file)
 
 reduced_frames = []

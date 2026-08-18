@@ -16,8 +16,12 @@ Mirrors AIR.jl's ObslogPaths::
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -91,6 +95,42 @@ class ObslogPaths:
             self.data_folder, f"master_skies_{self.date}.fits")
         self.masks_file = os.path.join(
             self.data_folder, f"master_mask_{self.date}.fits")
+
+    def check_frame_dates(self, frames, keyword="DATE-OBS"):
+        """Warn when the dataset folder's date disagrees with its frames.
+
+        Parameters
+        ----------
+        frames : iterable of Frame
+            Frames belonging to this dataset.
+        keyword : str, optional
+            Header keyword holding the observing date. NIRC2 records
+            ``DATE-OBS`` in UTC.
+
+        Returns
+        -------
+        set of str
+            The distinct dates found in the frames.
+
+        Notes
+        -----
+        A Keck night runs roughly 18:00-06:00 HST, which is 04:00-16:00 UTC
+        the *following* day, so an entire night falls inside one UTC date and
+        that date names it unambiguously. It is one day later than the local
+        evening everyone says out loud, which is exactly how a folder ends up
+        named for the HST evening while every frame inside it is stamped with
+        the next UTC day.
+        """
+        found = {str(f.get(keyword, "")).strip()[:10] for f in frames}
+        found.discard("")
+        if found and self.date not in found:
+            log.warning(
+                "Dataset folder is dated %s but its frames say %s=%s. That "
+                "keyword is UTC, and a Keck night is a single UTC date one "
+                "day after the HST evening -- check which the folder is "
+                "named for, because masters and products inherit this date.",
+                self.date, keyword, ", ".join(sorted(found)))
+        return found
 
     def make_folders(self):
         """Create the night's subfolders, leaving any that already exist."""
