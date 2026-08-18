@@ -78,10 +78,19 @@ class ObslogPaths:
         self.table_file = os.path.join(
             self.data_folder, f"{self.date}_reduced_frames_table.txt")
 
-        self.darks_file = os.path.join(self.data_folder, "darks.fits")
-        self.flats_file = os.path.join(self.data_folder, "flats.fits")
-        self.skies_file = os.path.join(self.data_folder, "skies.fits")
-        self.masks_file = os.path.join(self.data_folder, "master_mask.fits")
+        # Masters carry the date because they belong to the dataset they
+        # were taken with. Darks and flats are taken with every dataset and
+        # are not interchangeable between them; a bare "darks.fits" invites
+        # reuse and leaves no trace when it happens. The date matches the
+        # rejects and frame-table files above.
+        self.darks_file = os.path.join(
+            self.data_folder, f"master_darks_{self.date}.fits")
+        self.flats_file = os.path.join(
+            self.data_folder, f"master_flats_{self.date}.fits")
+        self.skies_file = os.path.join(
+            self.data_folder, f"master_skies_{self.date}.fits")
+        self.masks_file = os.path.join(
+            self.data_folder, f"master_mask_{self.date}.fits")
 
     def make_folders(self):
         """Create the night's subfolders, leaving any that already exist."""

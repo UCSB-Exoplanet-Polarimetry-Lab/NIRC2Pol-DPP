@@ -315,7 +315,12 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
 
     from utils.provenance import record_step
 
-    record_step(cycle[0], "stokes cube",
+    # replace=True because this frame is an *input*: the record is written
+    # here so the writers, which build product headers from cycle[0], can
+    # find it. Rebuilding the same cycle -- scanning fast axis offsets, say
+    # -- would otherwise leave a stack of records disagreeing about how the
+    # cube in hand was made.
+    record_step(cycle[0], "stokes cube", replace=True,
                 instrument=instrument.name, nframes=len(cycle),
                 background=instrument.describe_background(),
                 critical_angles=list(critical_angles),

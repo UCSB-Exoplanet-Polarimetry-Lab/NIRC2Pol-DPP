@@ -83,7 +83,54 @@ def _format_value(value):
 _CONTINUATION = "    "
 
 
-def record_step(target, step, **params):
+def drop_step(target, step):
+    """Remove any previously recorded instance of one step.
+
+    Parameters
+    ----------
+    target : Frame or astropy.io.fits.Header
+        Product to edit.
+    step : str
+        Step name, as passed to :func:`record_step`.
+
+    Returns
+    -------
+    int
+        How many records were removed.
+
+    Notes
+    -----
+    Preserves HISTORY cards that are not ours, and removes a wrapped step
+    whole -- its continuation cards go with it, or the leftovers would be
+    reattached to whatever step happened to precede them.
+    """
+    header = getattr(target, "header", target)
+    cards = [str(h) for h in header.get("HISTORY", [])]
+    if not cards:
+        return 0
+
+    prefix = f"{_STEP_PREFIX}{step}"
+    kept, removed, dropping = [], 0, False
+    for text in cards:
+        if text.startswith(_STEP_PREFIX):
+            dropping = text.startswith(prefix)
+            removed += dropping
+            if not dropping:
+                kept.append(text)
+        elif dropping and text.startswith(_CONTINUATION):
+            continue                      # a continuation of the dropped step
+        else:
+            dropping = False
+            kept.append(text)
+
+    if removed:
+        del header["HISTORY"]
+        for text in kept:
+            header.add_history(text)
+    return removed
+
+
+def record_step(target, step, replace=False, **params):
     """Record one processing step in a header.
 
     Parameters
@@ -95,6 +142,12 @@ def record_step(target, step, **params):
         ``"stokes cube"``.
     **params
         Settings worth reproducing, rendered by :func:`_format_value`.
+    replace : bool, optional
+        Drop any earlier record of this same step first. Use it for a step
+        that can be re-run over the same frames -- rebuilding a Stokes cube
+        at several fast axis offsets would otherwise leave several records
+        that contradict each other, with nothing to say which one produced
+        the data in hand.
 
     Returns
     -------
@@ -113,6 +166,9 @@ def record_step(target, step, **params):
     trip to disk.
     """
     header = getattr(target, "header", target)
+
+    if replace:
+        drop_step(header, step)
 
     if "DPPVER" not in header:
         header["DPPVER"] = (pipeline_version(), "NIRC2Pol-DPP version")

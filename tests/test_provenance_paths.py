@@ -1,12 +1,15 @@
 """The audit trail: provenance headers, and the reject list."""
 
+import os
+
 import numpy as np
 from astropy.io import fits
 import pytest
 
 from utils.frame import Frame
-from utils.paths import load_rejects, record_reject
-from utils.provenance import describe, record_step, steps_of
+from utils.paths import ObslogPaths, load_rejects, record_reject
+from utils.provenance import (describe, drop_step, record_step,
+                              steps_of)
 
 
 def test_record_step_round_trips():
@@ -136,3 +139,57 @@ def test_a_long_parameter_list_survives_the_round_trip():
                      "badpix=interpolation"):
         assert expected in step, f"{expected} lost in the wrap"
     assert "    " not in step, "continuation padding leaked into the text"
+
+
+def test_drop_step_removes_a_wrapped_step_whole():
+    """A wrapped step must go with its continuations, or the leftovers get
+    reattached to whatever step precedes them."""
+    header = fits.Header()
+    header.add_history("not ours, leave alone")
+    record_step(header, "keep me", a=1)
+    record_step(header, "dark/flat reduction", dark="n1013.fits",
+                flat="n0024.fits", gain=8.0, saturation=4500.0,
+                div_coadds=True, badpix="interpolation", polflat=True)
+
+    assert drop_step(header, "dark/flat reduction") == 1
+    remaining = steps_of(header)
+    assert len(remaining) == 1 and "keep me" in remaining[0]
+    assert not any("n1013" in str(h) for h in header["HISTORY"]), \
+        "a continuation card survived its step"
+    assert any("not ours" in str(h) for h in header["HISTORY"]), \
+        "someone else's HISTORY was collateral damage"
+
+
+def test_record_step_replace_keeps_only_the_latest():
+    header = fits.Header()
+    record_step(header, "stokes cube", replace=True, fast_axis_offset=-13)
+    record_step(header, "stokes cube", replace=True, fast_axis_offset=-11)
+    steps = steps_of(header)
+    assert len(steps) == 1
+    assert "fast_axis_offset=-11" in steps[0]
+
+
+def test_master_filenames_carry_the_date():
+    """Masters belong to the dataset they were taken with; darks and flats
+    are taken with every dataset and are not interchangeable."""
+    paths = ObslogPaths("/data", "2025-12-07")
+    for attr in ("darks_file", "flats_file", "skies_file", "masks_file"):
+        name = os.path.basename(getattr(paths, attr))
+        assert "2025-12-07" in name, f"{attr} is not dated: {name}"
+        assert name.startswith("master_")
+
+
+def test_masters_record_how_they_were_built():
+    """A master outlives its reduction, so it has to say what made it."""
+    from reduction.masters import make_master_darks
+    darks = [Frame(np.ones((8, 8)) * i,
+                   {"NAXIS1": 8, "NAXIS2": 8, "ITIME": 1.0, "COADDS": 1,
+                    "SAMPMODE": 3, "READS": 1, "FILENAME": f"d{i}.fits"})
+             for i in range(3)]
+    masters, _ = make_master_darks(darks)
+
+    step = steps_of(masters[0].header)
+    assert step, "a master with no provenance cannot be audited later"
+    assert "dark combination" in step[0]
+    assert "nframes=3" in step[0]
+    assert "DPPVER" in masters[0].header, "no pipeline version on the master"

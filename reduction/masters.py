@@ -28,13 +28,16 @@ from scipy import ndimage
 from utils.frame import Frame, framelist_to_cube, match_keys
 from utils.imutils import crop
 from .calibrate import find_closest_dark
+from utils.provenance import record_step
+
 from . import defaults
 
 log = logging.getLogger(__name__)
 
 
 def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
-                 median_size=7, method=np.nanmedian, min_frames=3):
+                 median_size=7, method=np.nanmedian, min_frames=3,
+                 kind="master"):
     """Group frames by the header keywords in ``keylist`` and combine each
         group into a master frame.
 
@@ -118,6 +121,16 @@ def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
         master["MAMEAN"] = float(np.mean(master.data[~mask]))
         master["MASTD"] = float(np.std(master.data[~mask]))
 
+        # A master outlives the reduction that made it -- it is written to
+        # disk and matched to science frames later -- so it has to be able
+        # to say what built it, and with which pipeline version.
+        record_step(master, f"{kind} combination",
+                    nframes=len(group), combine=getattr(method, "__name__",
+                                                        str(method)),
+                    n_sigma=n_sigma, median_size=median_size,
+                    masked_pixels=int(mask.sum()),
+                    detector_mask=bad_pixel_mask is not None)
+
         master_frames[key] = master
         master_masks[key] = mask
 
@@ -155,7 +168,7 @@ def make_master_darks(dark_frames, keylist=None, bad_pixel_mask=None,
         log.warning("Not enough dark frames found, skipping...")
         return [], []
 
-    masters, masks = make_masters(dark_frames, keylist,
+    masters, masks = make_masters(dark_frames, keylist, kind="dark",
                                   bad_pixel_mask=bad_pixel_mask,
                                   min_frames=min_frames, **kwargs)
     return list(masters.values()), list(masks.values())
@@ -241,7 +254,7 @@ def make_flats(flat_frames, master_darks, keylist=None, bad_pixel_mask=None,
         log.warning("Not enough flat frames found, skipping...")
         return {}, {}
 
-    master_flats, masks = make_masters(flat_frames, keylist,
+    master_flats, masks = make_masters(flat_frames, keylist, kind="flat",
                                        bad_pixel_mask=bad_pixel_mask,
                                        min_frames=min_frames, **kwargs)
 
@@ -294,7 +307,7 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
         log.warning("Not enough sky frames found, skipping...")
         return [], []
 
-    master_skies, masks = make_masters(sky_frames, keylist,
+    master_skies, masks = make_masters(sky_frames, keylist, kind="sky",
                                        bad_pixel_mask=bad_pixel_mask,
                                        min_frames=min_frames, **kwargs)
 
@@ -370,7 +383,8 @@ def make_lamp_flats(lampon_frames, master_darks, keylist=None,
         if len(frames) < min_frames:
             log.warning("Not enough %s frames found, skipping...", label)
             return {}, {}
-        return make_masters(frames, keylist, bad_pixel_mask=bad_pixel_mask,
+        return make_masters(frames, keylist, kind="lamp flat",
+                            bad_pixel_mask=bad_pixel_mask,
                             min_frames=min_frames, **kwargs)
 
     master_lampon, lampon_masks = _make(lampon_frames, "lamp-on")
