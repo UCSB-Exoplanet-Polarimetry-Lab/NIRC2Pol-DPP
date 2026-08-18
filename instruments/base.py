@@ -67,10 +67,6 @@ class PolarimetryData(ABC):
     name = "abstract"
     plate_scale = None  # arcsec / pixel
 
-    # filter substitution rules for flat matching, passed to
-    # reduction.calibrate.find_closest_flat (empty by default)
-    flat_exceptions = {}
-
     # Which flat type each band requires, e.g. {"Lp": "SKY", "H": "LAMP"},
     # and the fallback for bands not listed. Which flat a band needs is a
     # property of the instrument and its bands, so it belongs here rather

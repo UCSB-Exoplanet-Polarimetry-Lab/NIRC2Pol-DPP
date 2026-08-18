@@ -188,7 +188,6 @@ for frame in sci_frames:
     reduced = reduce_frame(
         frame, master_flats, master_darks, master_skies, master_masks,
         bad_pixel_mask=bad_pixel_mask,
-        flat_exceptions=instrument.flat_exceptions,
         required_flat_types=instrument.required_flat_types,
         default_required_flat_type=instrument.default_required_flat_type,
         gain=instrument.gain(frame),

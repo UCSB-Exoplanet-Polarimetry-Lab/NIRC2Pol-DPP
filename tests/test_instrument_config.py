@@ -161,3 +161,74 @@ def test_reset_warnings_rearms_flags_across_the_mro():
     assert cls._announced_beam_geometry is False
     # a flag set further up the MRO is re-armed too, without naming it here
     assert NIRC2PolarimetryData._warned_uncalibrated_offset is False
+
+
+# -- the module and its config file must agree ------------------------------
+
+def test_every_instrument_module_imports():
+    """The values in the .ini are read at import, so a section renamed on one
+    side and not the other raises before any test runs -- which takes the whole
+    suite down at collection instead of failing one case that says why.
+
+    This has happened twice: flat_elevation moved to [flat_type] while nirc2.py
+    still read it from [instrument], and a class attribute still referenced a
+    module constant that had been deleted.
+    """
+    import importlib
+    import pkgutil
+
+    import instruments
+
+    failures = []
+    for info in pkgutil.iter_modules(instruments.__path__):
+        try:
+            importlib.import_module(f"instruments.{info.name}")
+        except Exception as exc:                      # noqa: BLE001
+            failures.append(f"{info.name}: {type(exc).__name__}: {exc}")
+
+    assert not failures, ("instrument modules that do not import:\n  "
+                          + "\n  ".join(failures))
+
+
+def test_flat_type_table_holds_bands_mapped_to_plain_strings():
+    """Read with config_csv this comes back as {'Lp': ('SKY',)}, and a
+    one-element tuple never compares equal to the FLATTYPE string read off a
+    flat -- so every correctly flat-fielded frame is refused."""
+    table = nirc2.REQUIRED_FLAT_TYPE_BY_BAND
+
+    assert table["Lp"] == "SKY"
+    assert table["Kp"] == "LAMP"
+    assert nirc2.DEFAULT_REQUIRED_FLAT_TYPE == "LAMP"
+
+    for band, wanted in table.items():
+        assert isinstance(wanted, str), f"{band} -> {wanted!r} is not a string"
+        assert wanted == wanted.upper().strip()
+
+    # every option in [flat_type] is taken as a band name, so anything that is
+    # not one leaks into the table -- flat_elevation did exactly that
+    assert not any(ch.islower() for band in table for ch in band[:1]), \
+        f"non-band option leaked into the flat type table: {sorted(table)}"
+
+
+def test_a_correct_flat_is_not_refused():
+    """The end-to-end shape of the tuple bug: an L' frame with the SKY flat
+    its band requires must reduce, not raise."""
+    from reduction.calibrate import find_closest_flat
+
+    science = Frame(np.ones((8, 8)),
+                    {"FILTER": "Lp + Wollaston", "FWINAME": "Lp",
+                     "NAXIS1": 8, "NAXIS2": 8, "FILENAME": "sci.fits"})
+    flat = Frame(np.ones((8, 8)),
+                 {"FILTER": "Lp + Wollaston", "FWINAME": "Lp", "NAXIS1": 8,
+                  "NAXIS2": 8, "FLATTYPE": "SKY", "NFRAMES": 3})
+
+    _, matched = find_closest_flat(
+        science, [flat],
+        required_flat_types=NIRC2PolarimetryData.required_flat_types,
+        default_required_flat_type=(
+            NIRC2PolarimetryData.default_required_flat_type))
+    assert matched is not None
+    assert matched["FLATCHK"] is True, "the requirement was not evaluated"
+    assert matched["FLATMISM"] is False
+
+

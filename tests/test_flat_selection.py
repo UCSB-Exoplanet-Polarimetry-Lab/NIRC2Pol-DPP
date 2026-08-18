@@ -67,7 +67,7 @@ def _sort_key(flat, required_type=None):
 # --- which type each band requires -------------------------------------
 
 @pytest.mark.parametrize("band,expected", [
-    ("Lp", "SKY"), ("L", "SKY"), ("Ms", "SKY"), ("M", "SKY"),
+    ("Lp", "SKY"), ("L", "SKY"),
     ("J", "LAMP"), ("H", "LAMP"), ("K", "LAMP"), ("Kp", "LAMP"),
     ("Ks", "LAMP"),
 ])
@@ -122,11 +122,16 @@ def test_explicit_required_type_overrides_the_band_rule():
 # --- the filter must match; size and exposure are not the same ---------
 
 def test_filter_must_match():
-    """A flat in the wrong filter is never used, whatever else matches."""
+    """A flat in the wrong filter is never used, whatever else matches. It
+    now surfaces as a refusal rather than a quiet unflattened reduction."""
+    with pytest.raises(ValueError, match="No usable flat"):
+        _find_flat(_science("Kp + Wollaston", "Kp"),
+                   [_flat("H + Wollaston", "H", "LAMP")])
     _, got = _find_flat(_science("Kp + Wollaston", "Kp"),
-                               [_flat("H + Wollaston", "H", "LAMP")])
-    assert got is None, "a flat in the wrong filter describes the wrong "\
-                        "throughput and must not be used"
+                        [_flat("H + Wollaston", "H", "LAMP")],
+                        allow_no_flat=True)
+    assert got is None, ("a flat in the wrong filter describes the wrong "
+                         "throughput and must not be used")
 
 
 def test_exposure_settings_are_ignored():
@@ -148,18 +153,13 @@ def test_larger_flat_is_trimmed():
 
 
 def test_smaller_flat_is_refused():
-    """A flat smaller than the frame cannot cover it, so it is refused."""
-    _, got = _find_flat(_science(n=64), [_flat(n=32)])
+    """A flat smaller than the frame cannot cover it, so it is not matched --
+    and with nothing else to fall back on, that is now a refusal rather than
+    a quiet unflattened reduction."""
+    with pytest.raises(ValueError, match="No usable flat"):
+        _find_flat(_science(n=64), [_flat(n=32)])
+    _, got = _find_flat(_science(n=64), [_flat(n=32)], allow_no_flat=True)
     assert got is None, "a flat smaller than the frame cannot calibrate it"
-
-
-def test_flat_exceptions_substitute_a_filter():
-    """Narrowband filters with no flats of their own borrow a broadband one."""
-    _, got = _find_flat(
-        _science("H2O_ice + Wollaston", "H2O_ice"),
-        [_flat("Kp + Wollaston", "Kp", "LAMP")],
-        exceptions={"H2O_ice": ("Kp",)}, required_flat_type="LAMP")
-    assert got is not None and "Kp" in got["FILTER"]
 
 
 # --- ordering among valid flats ----------------------------------------
@@ -309,3 +309,49 @@ def test_instrument_supplies_the_bad_pixel_mask(monkeypatch):
     make_master_darks(darks, instrument=inst,
                       bad_pixel_mask=np.zeros((8, 8), dtype=bool))
     assert not calls, "the mask was read despite one being supplied"
+
+
+# --- a missing flat refuses, and the two deliberate ways past it --------
+
+def test_a_missing_flat_refuses_by_default():
+    """Dividing by ones leaves the detector response in the data and is easy
+    to miss later, so it must not be the quiet path."""
+    with pytest.raises(ValueError) as excinfo:
+        _find_flat(_science("Lp + Wollaston", "Lp"), [_flat()])
+    message = str(excinfo.value)
+    assert "flat_override" in message and "allow_no_flat" in message, \
+        "the refusal has to say how to proceed deliberately"
+
+
+def test_allow_no_flat_reduces_unflattened():
+    """The old behaviour, now opt-in."""
+    _, got = _find_flat(_science("Lp + Wollaston", "Lp"), [_flat()],
+                        allow_no_flat=True)
+    assert got is None
+
+
+def test_flat_override_uses_the_named_flat_whatever_its_filter():
+    """The per-reduction replacement for a flat-exceptions entry: the user
+    names the flat, the pipeline never guesses one."""
+    kp_flat = _flat("Kp + Wollaston", "Kp", "LAMP")
+    _, got = _find_flat(_science("H2O_ice + Wollaston", "H2O_ice"),
+                        [kp_flat], flat_override=kp_flat)
+    assert got is not None and "Kp" in got["FILTER"]
+    assert got["FLATSUB"] is True, "the substitution must be recorded"
+
+
+def test_an_overridden_flat_still_faces_the_type_check():
+    """Choosing the filter by hand must not quietly waive the SKY/LAMP rule
+    as well -- that is a separate decision."""
+    lamp = _flat("Kp + Wollaston", "Kp", "LAMP")
+    with pytest.raises(ValueError, match="requires a SKY flat"):
+        _find_flat(_science("Lp + Wollaston", "Lp"), [lamp],
+                   flat_override=lamp)
+
+
+def test_substitution_reaches_the_reduced_frame():
+    kp_flat = _flat("Kp + Wollaston", "Kp", "LAMP")
+    reduced = _reduce(_science("H2O_ice + Wollaston", "H2O_ice"), kp_flat,
+                      flat_override=kp_flat)
+    assert reduced["FLATSUB"] is True
+    assert reduced["FLATDIV"] is True

@@ -34,9 +34,12 @@ OBSERVATORY_LAT = _CONFIG.getfloat("observatory", "latitude")
 OBSERVATORY_LON = _CONFIG.getfloat("observatory", "longitude")
 
 # Which flat type each band requires, and the fallback for unlisted bands.
-DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG.get("flat_type", "default_flat_type")
+# Read as a scalar, not with config_csv: a band requires one type, and a
+# one-element tuple would never compare equal to the FLATTYPE string read off
+# a flat, so every correctly flat-fielded frame would be refused.
+DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG.get("flat_type", "default_flat_type").strip().upper()
 REQUIRED_FLAT_TYPE_BY_BAND = {
-    band: config_csv(_CONFIG, "flat_type", band)
+    band: _CONFIG.get("flat_type", band).strip().upper()
     for band in _CONFIG["flat_type"] if band != "default_flat_type"}
 
 REQUIRED_HEADER_KEYWORDS = [
@@ -606,7 +609,6 @@ class NIRC2PolarimetryData(PolarimetryData):
 
     name = "NIRC2"
     plate_scale = PLATE_SCALE
-    flat_exceptions = FLAT_EXCEPTIONS
     required_flat_types = REQUIRED_FLAT_TYPE_BY_BAND
     default_required_flat_type = DEFAULT_REQUIRED_FLAT_TYPE
 

@@ -56,10 +56,11 @@ def find_matching_master(frame, masters, keylist):
 
 
 def find_closest_flat(frame, master_flats, ranked_keylists=None,
-                      exceptions=None, required_flat_type=None,
+                      required_flat_type=None,
                       allow_flat_type_mismatch=False,
                       required_flat_types=None,
-                      default_required_flat_type=None):
+                      default_required_flat_type=None,
+                      flat_override=None, allow_no_flat=False):
     """Find the best-matching flat.
 
         Two things are mandatory. The filter must always match — a flat in another filter describes the
@@ -82,7 +83,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
 
         ``exceptions`` maps a filter substring to a tuple of acceptable
         substitute filter names, for filters that have no flats of their own
-        (e.g. NIRC2 narrowband — see ``instruments.nirc2.FLAT_EXCEPTIONS``).
+        named explicitly by the caller.
 
     Parameters
     ----------
@@ -129,18 +130,17 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     from .masters import required_flat_type_for
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
                        else defaults.RANKED_FLATS_KEYLISTS)
-    exceptions = exceptions or {}
-
     ind, matched_flat = None, None
 
-    for key, alternates in exceptions.items():
-        if key in frame["FILTER"]:
-            for alt in alternates:
-                for i, m in enumerate(master_flats):
-                    if alt in m["FILTER"]:
-                        ind, matched_flat = i, m
-                        log.warning("Using %s flat for %s frames!",
-                                    matched_flat["FILTER"], key)
+    if flat_override is not None:
+        # The caller named this one, so use it whatever its filter. The
+        # pipeline never picks a wrong-filter flat by itself -- guessing a
+        # substitute is exactly what the old flat-exceptions table did.
+        ind, matched_flat = None, flat_override
+        log.warning("Using a hand-picked %s flat for %s frame %s; the filters "
+                    "do not have to agree when the flat is named explicitly",
+                    matched_flat.get("FILTER"), frame.get("FILTER"),
+                    frame.get("FILENAME"))
 
     if matched_flat is None:
         for keylist in ranked_keylists:
@@ -149,10 +149,29 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
             if matched_flat is not None:
                 break
 
-    if matched_flat is None:
-        log.warning("No matching flat found for %s, %s",
-                    frame.get("FILENAME"), frame.get("FILTER"))
+    def _no_usable_flat(reason):
+        """Refuse, unless the caller has said an unflattened frame is fine.
+
+        Both routes here -- nothing matched the filter, and the only match is
+        too small to cover the frame -- end in the same place: dividing by
+        ones, which leaves the detector response in the data and is easy to
+        miss afterwards. They share one message so they cannot drift.
+        """
+        available = sorted({str(m.get("FILTER", "?")) for m in master_flats})
+        message = (
+            f"No usable flat for {frame.get('FILENAME')} in filter "
+            f"{frame.get('FILTER')!r}: {reason}. Flats are available in "
+            f"{available or 'no filters at all'}. Reducing without one "
+            "divides by ones and leaves the detector response in the data. "
+            "Either name the flat to use with flat_override=<Frame>, or say "
+            "the omission is deliberate with allow_no_flat=True.")
+        if not allow_no_flat:
+            raise ValueError(message)
+        log.warning("%s Proceeding because allow_no_flat=True.", message)
         return None, None
+
+    if matched_flat is None:
+        return _no_usable_flat("nothing matched the filter")
 
     band = str(frame.get("FWINAME")
                or str(frame.get("FILTER", "")).split("+")[0].strip())
@@ -170,6 +189,8 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     matched_flat["FLATCHK"] = (wanted is not None,
                                "band flat-type requirement was checked")
     matched_flat["FLATMISM"] = (False, "flat type does not match the band")
+    matched_flat["FLATSUB"] = (flat_override is not None,
+                               "flat was named explicitly, not matched")
 
     if wanted is None:
         # No instrument table, so there is nothing to check against. Say so
@@ -206,10 +227,9 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
             matched_flat = Frame(cropped, matched_flat.header.copy())
             matched_flat["FLATTRIM"] = (True, "flat trimmed to the frame size")
         else:
-            log.warning("Flat %s is smaller than the frame %s, cannot use "
-                        "it for %s", matched_flat.shape, frame.shape,
-                        frame.get("FILENAME"))
-            return None, None
+            return _no_usable_flat(
+                f"the only match is {matched_flat.shape}, smaller than the "
+                f"{frame.shape} frame, so it cannot cover it")
 
     return ind, matched_flat
 
@@ -341,9 +361,10 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None):
 
 
 def reduce_frame(frame, master_flats, master_darks, master_skies=None,
-                 masks=None, bad_pixel_mask=None, flat_exceptions=None,
+                 masks=None, bad_pixel_mask=None,
                  required_flat_type=None, allow_flat_type_mismatch=False,
                  required_flat_types=None, default_required_flat_type=None,
+                 flat_override=None, allow_no_flat=False,
                  bad_pixel_mask_size=9, bad_pixel_plus_mask_size=11,
                  gain=1.0, saturation_limit=1e12, skip_sky_sub=True,
                  div_coadds=True, div_itime=False,
@@ -362,8 +383,14 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
     bad_pixel_mask : ndarray of bool, optional
         Static detector bad-pixel mask (e.g. from
         ``instruments.nirc2.load_bad_pixel_mask()``).
-    flat_exceptions : dict, optional
-        Filter substitution rules passed to :func:`find_closest_flat`.
+    flat_override : Frame, optional
+        Use this flat regardless of its filter. The deliberate way to reduce
+        a frame whose own filter has no flats; nothing is guessed on your
+        behalf.
+    allow_no_flat : bool, optional
+        Proceed with no flat at all, dividing by ones. Off by default,
+        because that leaves the detector response in the data and is easy to
+        miss afterwards.
     required_flat_types : mapping, optional
         Band to required flat type, from ``instrument.required_flat_types``.
         Without it the band requirement cannot be enforced.
@@ -385,11 +412,12 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
     masks = masks or {}
 
     _, matched_flat = find_closest_flat(
-        reduced, master_flats, exceptions=flat_exceptions,
+        reduced, master_flats,
         required_flat_type=required_flat_type,
         allow_flat_type_mismatch=allow_flat_type_mismatch,
         required_flat_types=required_flat_types,
-        default_required_flat_type=default_required_flat_type)
+        default_required_flat_type=default_required_flat_type,
+        flat_override=flat_override, allow_no_flat=allow_no_flat)
     _, matched_dark = find_closest_dark(reduced, master_darks)
 
     if matched_dark is None:
@@ -402,12 +430,13 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
     if matched_flat is None:
         reduced["FLATDIV"] = False
         flat_data = np.ones(reduced.shape)
-        flat_checked = flat_mismatch = False
+        flat_checked = flat_mismatch = flat_substituted = False
     else:
         reduced["FLATDIV"] = True
         flat_data = matched_flat.data
         flat_checked = bool(matched_flat.get("FLATCHK", False))
         flat_mismatch = bool(matched_flat.get("FLATMISM", False))
+        flat_substituted = bool(matched_flat.get("FLATSUB", False))
 
     # Whether the band flat-type rule was actually enforced, and whether a
     # mismatch was waved through. Both are recorded always, the way DARKSUB
@@ -417,6 +446,8 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
                           "band flat-type requirement was checked")
     reduced["FLATMISM"] = (flat_mismatch,
                            "flat type does not match the band")
+    reduced["FLATSUB"] = (flat_substituted,
+                          "flat was named explicitly, not matched")
 
     reduced["SKYSUB"] = False
     if master_skies and not skip_sky_sub:
@@ -486,6 +517,9 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
                 polflat=(matched_flat.get("POLFLAT")
                          if matched_flat is not None else None),
                 flat_checked=flat_checked, flat_mismatch=flat_mismatch,
+                flat_substituted=flat_substituted,
+                flat_filter=(matched_flat.get("FILTER", "?")
+                             if matched_flat is not None else "none"),
                 gain=gain, saturation=saturation_limit,
                 div_coadds=div_coadds, div_itime=div_itime,
                 badpix=replacement_method)
