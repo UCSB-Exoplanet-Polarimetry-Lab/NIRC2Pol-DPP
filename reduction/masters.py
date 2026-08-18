@@ -35,6 +35,41 @@ from . import defaults
 log = logging.getLogger(__name__)
 
 
+def _instrument_default(instrument, value, attr, call=False):
+    """Fall back to an instrument attribute, leaving explicit values alone.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData or None
+        Source of the default. None means there is nothing to fall back to.
+    value : object
+        What the caller passed. Anything but None is returned untouched, so
+        an explicit argument always beats the instrument.
+    attr : str
+        Attribute to read.
+    call : bool, optional
+        Call the attribute rather than reading it, for the ones that are
+        methods. Only reached when the value is actually needed, which
+        matters for ``bad_pixel_mask`` -- it reads a FITS file.
+
+    Returns
+    -------
+    object
+        The caller's value, the instrument's, or None.
+
+    Notes
+    -----
+    This duck-types: it reads attributes off whatever it is handed and
+    imports nothing from ``instruments``. The reduction layer stays
+    instrument-agnostic; an instrument here is just an object carrying the
+    right attribute names.
+    """
+    if value is not None or instrument is None:
+        return value
+    got = getattr(instrument, attr, None)
+    return got() if (call and callable(got)) else got
+
+
 def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
                  median_size=7, method=np.nanmedian, min_frames=3,
                  kind="master"):
@@ -138,7 +173,7 @@ def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
 
 
 def make_master_darks(dark_frames, keylist=None, bad_pixel_mask=None,
-                      min_frames=3, **kwargs):
+                      min_frames=3, instrument=None, **kwargs):
     """Build master darks, one per unique combination of ``keylist`` header
         values. Returns ``(master_darks, masks)`` as flat lists.
 
@@ -149,9 +184,11 @@ def make_master_darks(dark_frames, keylist=None, bad_pixel_mask=None,
     keylist : list of str, optional
         Grouping keywords; defaults to ``defaults.DARKS_KEYLIST``.
     bad_pixel_mask : ndarray of bool, optional
-        Static detector mask.
+        Static detector mask. Defaults to ``instrument.bad_pixel_mask()``.
     min_frames : int, optional
         Minimum frames per master.
+    instrument : PolarimetryData, optional
+        Supplies ``bad_pixel_mask`` when it is not given explicitly.
     **kwargs
         Passed to :func:`make_masters`.
 
@@ -163,6 +200,8 @@ def make_master_darks(dark_frames, keylist=None, bad_pixel_mask=None,
         Matching bad-pixel masks.
     """
     keylist = keylist if keylist is not None else defaults.DARKS_KEYLIST
+    bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
+                                         "bad_pixel_mask", call=True)
 
     if len(dark_frames) < min_frames:
         log.warning("Not enough dark frames found, skipping...")
@@ -275,7 +314,8 @@ def make_flats(flat_frames, master_darks, keylist=None, bad_pixel_mask=None,
 
 
 def make_master_skies(sky_frames, master_darks, keylist=None,
-                      bad_pixel_mask=None, min_frames=3, **kwargs):
+                      bad_pixel_mask=None, min_frames=3, instrument=None,
+                      **kwargs):
     """Build master skies: like flats (dark-subtracted) but *not* normalized,
         since skies are subtracted rather than divided. Returns flat lists.
 
@@ -288,9 +328,11 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
     keylist : list of str, optional
         Grouping keywords.
     bad_pixel_mask : ndarray of bool, optional
-        Static detector mask.
+        Static detector mask. Defaults to ``instrument.bad_pixel_mask()``.
     min_frames : int, optional
         Minimum frames per master.
+    instrument : PolarimetryData, optional
+        Supplies ``bad_pixel_mask`` when it is not given explicitly.
     **kwargs
         Passed to :func:`make_masters`.
 
@@ -302,6 +344,8 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
         Matching bad-pixel masks.
     """
     keylist = keylist if keylist is not None else defaults.FLATS_KEYLIST
+    bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
+                                         "bad_pixel_mask", call=True)
 
     if len(sky_frames) < min_frames:
         log.warning("Not enough sky frames found, skipping...")
@@ -498,17 +542,20 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
                       master_darks, keylist=None, bad_pixel_mask=None,
                       modulator_keyword=None, critical_angles=None,
                       required_flat_type=None, required_flat_types=None,
-                      default_required_flat_type=None, **kwargs):
+                      default_required_flat_type=None, instrument=None,
+                      **kwargs):
     """Build every available kind of flat and return a single ranked list:
         for any science frame, the first matching flat in the list is the best
         available one.
 
-        When ``modulator_keyword`` and ``critical_angles`` are given (from the
-        instrument), dome/regular flats are split into a *polarimetric* set
-        (taken at the critical angles) and everything else. Polarimetric flats
-        are ranked ahead of all other flats, so they are used whenever they
-        exist and older data without them fall back to regular flats
-        automatically.
+        Pass ``instrument`` and the instrument-derived arguments below are
+        filled in from it; anything given explicitly still wins.
+
+        When ``modulator_keyword`` and ``critical_angles`` are known, dome and
+        regular flats are split into a *polarimetric* set (taken at the
+        critical angles) and everything else. Polarimetric flats are ranked
+        ahead of all other flats, so they are used whenever they exist, and
+        older data without them falls back to regular flats automatically.
 
         Ordering (see :func:`flat_sort_key`): polarimetric flats first, then
         dark-subtracted before darkless, then the band-required type — sky
@@ -549,6 +596,12 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
         Override the band's required type.
     **kwargs
         Passed through to the individual flat builders.
+    instrument : PolarimetryData, optional
+        Supplies ``modulator_keyword``, ``critical_angles``,
+        ``required_flat_types``, ``default_required_flat_type`` and
+        ``bad_pixel_mask`` when they are not given explicitly.
+        ``required_flat_type`` is deliberately not among them: that one is a
+        per-reduction override, not a property of the instrument.
 
     Returns
     -------
@@ -557,6 +610,23 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
     masks : list of ndarray
         Matching bad-pixel masks.
     """
+    # Everything below is a property of the instrument, so take it from the
+    # instrument unless the caller overrode it. Restating these at each call
+    # site is how one goes missing, and the one that matters is
+    # required_flat_types: without it the band flat-type rule is not
+    # enforced at all, which is precisely the silent failure FLATCHK exists
+    # to surface.
+    modulator_keyword = _instrument_default(instrument, modulator_keyword,
+                                            "modulator_keyword")
+    critical_angles = _instrument_default(instrument, critical_angles,
+                                          "critical_angles")
+    required_flat_types = _instrument_default(instrument, required_flat_types,
+                                              "required_flat_types")
+    default_required_flat_type = _instrument_default(
+        instrument, default_required_flat_type, "default_required_flat_type")
+    bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
+                                         "bad_pixel_mask", call=True)
+
     pol_flats, pol_masks = {}, {}
     if modulator_keyword is not None and critical_angles is not None:
         pol_frames, flat_frames = split_polarimetric_flats(

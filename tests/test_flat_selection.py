@@ -11,7 +11,8 @@ import pytest
 
 from instruments.nirc2 import NIRC2PolarimetryData
 from reduction.calibrate import find_closest_flat, reduce_frame
-from reduction.masters import flat_sort_key, required_flat_type_for
+from reduction.masters import (flat_sort_key, make_master_darks,
+                               make_master_flats, required_flat_type_for)
 from utils.frame import Frame
 from utils.provenance import describe
 
@@ -238,3 +239,73 @@ def test_an_overridden_mismatch_is_recorded_on_the_reduced_frame():
                       allow_flat_type_mismatch=True)
     assert reduced["FLATMISM"] is True
     assert reduced["FLATCHK"] is True
+
+
+# --- instrument-supplied defaults ---------------------------------------
+
+def _raw_flat(hwp, band="Kp", n=8):
+    """A raw dome flat at one HWP angle, for the polarimetric split."""
+    return Frame(np.ones((n, n)),
+                 {"FILTER": f"{band} + Wollaston", "FWINAME": band,
+                  "NAXIS1": n, "NAXIS2": n, "ITIME": 1.0, "COADDS": 1,
+                  "SAMPMODE": 3, "READS": 1, "PCUPR": hwp,
+                  "FILENAME": f"f{hwp}.fits"})
+
+
+def _critical_angle_flats():
+    """Three flats at each critical angle -- a polarimetric set."""
+    return [_raw_flat(a) for a in NIRC2PolarimetryData.critical_angles
+            for _ in range(3)]
+
+
+def test_instrument_supplies_the_polarimetric_split():
+    """Passing instrument= must do what naming the two keywords did, or the
+    convenience is a trap: the flats silently stop being ranked."""
+    flats, _ = make_master_flats(_critical_angle_flats(), [], [], [],
+                                 instrument=NIRC2PolarimetryData())
+    assert any(f.get("POLFLAT") for f in flats), \
+        "critical-angle flats were not recognised as polarimetric"
+
+
+def test_an_explicit_argument_still_beats_the_instrument():
+    """The instrument is a default, not an override."""
+    flats, _ = make_master_flats(_critical_angle_flats(), [], [], [],
+                                 instrument=NIRC2PolarimetryData(),
+                                 modulator_keyword="NOSUCHKEY")
+    assert not any(f.get("POLFLAT") for f in flats), \
+        "the explicit keyword was ignored in favour of the instrument"
+
+
+def test_instrument_supplies_the_flat_type_table():
+    """The dangerous one to forget: without the table the band requirement
+    is not enforced at all."""
+    science = _science("Lp + Wollaston", "Lp")
+    lamp = _flat("Lp + Wollaston", "Lp", "LAMP")
+
+    # instrument= alone must still enforce SKY for L-prime
+    with pytest.raises(ValueError, match="requires a SKY flat"):
+        find_closest_flat(science, [lamp],
+                          required_flat_types=NIRC2PolarimetryData.required_flat_types,
+                          default_required_flat_type=(
+                              NIRC2PolarimetryData.default_required_flat_type))
+
+
+def test_instrument_supplies_the_bad_pixel_mask(monkeypatch):
+    """It is a method that reads a FITS file, so it must be called only when
+    it is actually needed."""
+    calls = []
+
+    class Counting(NIRC2PolarimetryData):
+        def bad_pixel_mask(self):
+            calls.append(1)
+            return np.zeros((8, 8), dtype=bool)
+
+    inst = Counting()
+    darks = [_raw_flat(0.0) for _ in range(3)]
+    make_master_darks(darks, instrument=inst)
+    assert calls, "the instrument's mask was never consulted"
+
+    calls.clear()
+    make_master_darks(darks, instrument=inst,
+                      bad_pixel_mask=np.zeros((8, 8), dtype=bool))
+    assert not calls, "the mask was read despite one being supplied"
