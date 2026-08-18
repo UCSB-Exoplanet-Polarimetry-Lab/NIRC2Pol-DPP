@@ -176,3 +176,61 @@ def subtract_mean_background(data, box=None):
         for plane in data.reshape(-1, *data.shape[-2:]):
             _sub(plane)
     return data
+
+
+def subtract_background(stack, method, box=None, annulus=None):
+    """Apply the background subtraction named by ``method``.
+
+    Parameters
+    ----------
+    stack : ndarray
+        Image or beam stack to correct.
+    method : {"mean_box", "annulus", "dither", None}
+        Which subtraction to apply. None returns the input untouched, which
+        is how a caller says the omission is deliberate.
+    box : tuple of int, optional
+        ``(ylow, yhigh, xlow, xhigh)`` for ``"mean_box"``.
+    annulus : tuple of float, optional
+        ``(r_inner, r_outer)`` in pixels for ``"annulus"``.
+
+    Returns
+    -------
+    ndarray
+        The corrected data, or the input unchanged for ``None`` and
+        ``"dither"``.
+
+    Raises
+    ------
+    ValueError
+        If a method needs parameters it was not given, or is not recognised.
+
+    Notes
+    -----
+    ``"dither"`` is a no-op here by design: dither pairs are differenced at
+    frame level by :func:`subtract_dither_pairs`, before the beams are cut
+    out, so there is nothing left to do per beam.
+
+    Every sky subtraction the pipeline knows about is in this module,
+    including the choice between them. Instruments carry which method to use
+    and its parameters, since those are per-dataset settings, but none of
+    them implements a subtraction.
+    """
+    if method is None:
+        return stack
+
+    if method == "mean_box":
+        if box is None:
+            raise ValueError("background method 'mean_box' requires "
+                             "box=(ylow, yhigh, xlow, xhigh)")
+        return subtract_mean_background(stack, box=box)
+
+    if method == "annulus":
+        if annulus is None:
+            raise ValueError("background method 'annulus' requires "
+                             "annulus=(r_inner, r_outer)")
+        return subtract_annulus_background(stack, *annulus)
+
+    if method == "dither":
+        return stack
+
+    raise ValueError(f"Unknown background method {method!r}")

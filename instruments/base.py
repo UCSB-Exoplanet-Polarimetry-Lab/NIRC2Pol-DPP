@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from configparser import ConfigParser
 import logging
+
+from reduction.sky import subtract_background
 from abc import ABC, abstractmethod
 
 import numpy as np
@@ -117,39 +119,42 @@ class PolarimetryData(ABC):
                     setattr(klass, name, False)
 
     def subtract_background(self, stack):
-        """Remove the sky/thermal background from each beam of a stack."""
-        from reduction.sky import (subtract_annulus_background,
-                                   subtract_mean_background)
+        """Remove the sky/thermal background from each beam of a stack.
 
-        if self.background_method is None:
+        Parameters
+        ----------
+        stack : ndarray
+            Beam stack to correct.
+
+        Returns
+        -------
+        ndarray
+            The corrected stack.
+
+        Notes
+        -----
+        The subtractions, and the dispatch between them, are in
+        :func:`reduction.sky.subtract_background`; this supplies the three
+        per-dataset settings the instrument carries and nothing else.
+
+        The one piece of logic kept here is the warning for a ``mean_box``
+        with no box, because saying it once per instrument needs the
+        ``_warned_*`` flag that :meth:`reset_warnings` clears.
+        """
+        if self.background_method == "mean_box" and self.background_box is None:
+            if not type(self)._warned_no_background:
+                log.warning(
+                    "%s has background_method='mean_box' but no "
+                    "background_box set, so no background is being "
+                    "removed. On-sky data should configure one (or set "
+                    "background_method=None to say the omission is "
+                    "deliberate).", type(self).__name__)
+                type(self)._warned_no_background = True
             return stack
 
-        if self.background_method == "mean_box":
-            if self.background_box is None:
-                if not type(self)._warned_no_background:
-                    log.warning(
-                        "%s has background_method='mean_box' but no "
-                        "background_box set, so no background is being "
-                        "removed. On-sky data should configure one (or set "
-                        "background_method=None to say the omission is "
-                        "deliberate).", type(self).__name__)
-                    type(self)._warned_no_background = True
-                return stack
-            return subtract_mean_background(stack, box=self.background_box)
-
-        if self.background_method == "annulus":
-            if self.background_annulus is None:
-                raise ValueError("background_method='annulus' requires "
-                                 "background_annulus=(r_inner, r_outer)")
-            return subtract_annulus_background(stack, *self.background_annulus)
-
-        if self.background_method == "dither":
-            # Handled at frame level, before beam extraction, by
-            # reduction.sky.subtract_dither_pairs; nothing to do per beam.
-            return stack
-
-        raise ValueError(f"Unknown background_method "
-                         f"{self.background_method!r}")
+        return subtract_background(stack, self.background_method,
+                                   box=self.background_box,
+                                   annulus=self.background_annulus)
 
     def describe_background(self):
         """One-line description of the background setting, for provenance."""

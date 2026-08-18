@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from reduction.masters import make_lamp_flats, make_master_darks
-from reduction.sky import (subtract_annulus_background, subtract_dither_pairs,
-                           subtract_mean_background)
+from reduction.sky import (subtract_annulus_background, subtract_background,
+                           subtract_dither_pairs, subtract_mean_background)
 from utils.frame import Frame
 
 
@@ -175,3 +175,43 @@ def test_make_lamp_flats_tags_nodark_when_no_dark_matches():
 def test_make_lamp_flats_needs_enough_frames():
     """Too few frames yields no master rather than a noisy one."""
     assert make_lamp_flats(_lamp_frames(n=2), [])[0] == {}
+
+
+# --- the dispatch, now beside the subtractions it dispatches to ------------
+
+def test_none_returns_the_input_untouched():
+    """How a caller says the omission is deliberate."""
+    data = np.arange(16, dtype=float).reshape(4, 4)
+    assert subtract_background(data, None) is data
+
+
+def test_dither_is_a_no_op_per_beam():
+    """Dither pairs are differenced at frame level by subtract_dither_pairs,
+    before the beams are cut out, so there is nothing left to do here."""
+    data = np.ones((4, 4))
+    assert subtract_background(data, "dither") is data
+
+
+def test_mean_box_and_annulus_reach_the_right_subtraction():
+    data = np.ones((20, 20)) * 5.0
+    boxed = subtract_background(data, "mean_box", box=(0, 20, 0, 20))
+    assert np.allclose(boxed, 0.0), "a flat pedestal should subtract to zero"
+
+    ringed = subtract_background(data, "annulus", annulus=(4, 8))
+    assert np.allclose(ringed, 0.0)
+
+
+@pytest.mark.parametrize("method, kwargs", [
+    ("mean_box", {}),
+    ("annulus", {}),
+])
+def test_a_method_without_its_parameters_refuses(method, kwargs):
+    """Silently skipping the subtraction would leave the pedestal in the
+    data with nothing to show for it."""
+    with pytest.raises(ValueError, match=method):
+        subtract_background(np.ones((8, 8)), method, **kwargs)
+
+
+def test_an_unknown_method_refuses():
+    with pytest.raises(ValueError, match="Unknown background method"):
+        subtract_background(np.ones((8, 8)), "sky_hook")
