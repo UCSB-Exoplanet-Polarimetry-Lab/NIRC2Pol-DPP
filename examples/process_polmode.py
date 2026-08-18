@@ -145,10 +145,11 @@ raw_files = sorted(glob.glob(os.path.join(paths.raw_folder, "*.fits*")))
 sorted_files = instrument.sort_frames(raw_files)
 
 # --- 2. master darks / flats / skies --------------------------------------
-bad_pixel_mask = instrument.bad_pixel_mask()
-
+# instrument= supplies the detector mask, how to spot a polarimetric
+# (critical-angle) flat set, and which flat type each band requires. Pass
+# any of them explicitly to override.
 darks = load_frames(sorted_files["darks"], rejects=rejects)
-master_darks, dark_masks = make_master_darks(darks, bad_pixel_mask=bad_pixel_mask)
+master_darks, dark_masks = make_master_darks(darks, instrument=instrument)
 if master_darks:
     save_frames(paths.darks_file, master_darks)
 
@@ -157,14 +158,7 @@ master_flats, flat_masks = make_master_flats(
     load_frames(sorted_files["flats_sky"], rejects=rejects),
     load_frames(sorted_files["flats_lampon"], rejects=rejects),
     master_darks,
-    bad_pixel_mask=bad_pixel_mask,
-    # tell it how to spot a polarimetric (critical-angle) flat set so those
-    # rank ahead of every other flat; data without them fall back to regular
-    modulator_keyword=instrument.modulator_keyword,
-    critical_angles=instrument.critical_angles,
-    # which flat a band requires is a property of the instrument
-    required_flat_types=instrument.required_flat_types,
-    default_required_flat_type=instrument.default_required_flat_type,
+    instrument=instrument,
 )
 if master_flats:
     save_frames(paths.flats_file, master_flats)
@@ -173,13 +167,16 @@ master_skies = None
 if USE_MASTER_SKIES:
     master_skies, _ = make_master_skies(
         load_frames(sorted_files["flats_sky"], rejects=rejects),
-        master_darks, bad_pixel_mask=bad_pixel_mask)
+        master_darks, instrument=instrument)
     if master_skies:
         save_frames(paths.skies_file, master_skies)
 
 master_masks = make_master_masks(dark_masks, flat_masks)
 
 # --- 3. pre-process science frames ----------------------------------------
+# read once, not once per frame: this loads a FITS file
+bad_pixel_mask = instrument.bad_pixel_mask()
+
 sci_frames = load_frames(sorted_files["sci"], rejects=rejects)
 # DATE above must be the UTC date the frames carry, since the masters and
 # every product inherit it from the folder name
