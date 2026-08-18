@@ -100,7 +100,10 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
         Override the band's required type, ``"SKY"`` or ``"LAMP"``.
     allow_flat_type_mismatch : bool, optional
         Downgrade a type mismatch from an error to a warning, recording
-        ``FLATMISM`` in the returned flat's header.
+        ``FLATMISM`` in the returned flat's header. The returned flat also
+        carries ``FLATCHK``, recording whether the band requirement could be
+        evaluated at all; :func:`reduce_frame` copies both onto the reduced
+        frame.
 
     Returns
     -------
@@ -157,6 +160,17 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
                                     required_flat_types,
                                     default_required_flat_type)
     got = str(matched_flat.get("FLATTYPE", "")).split("+")[0] or "UNKNOWN"
+
+    # Record the outcome on the flat we hand back, so reduce_frame can carry
+    # it onto the product. A requirement that was skipped or overridden has
+    # to be readable in the file afterwards, not only in a log line that
+    # scrolled past while it happened. Copy first: the master flat is shared
+    # between frames and must not be stamped in place.
+    matched_flat = Frame(matched_flat.data, matched_flat.header.copy())
+    matched_flat["FLATCHK"] = (wanted is not None,
+                               "band flat-type requirement was checked")
+    matched_flat["FLATMISM"] = (False, "flat type does not match the band")
+
     if wanted is None:
         # No instrument table, so there is nothing to check against. Say so
         # once: silently skipping a requirement is how a wrong flat gets
@@ -181,7 +195,6 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
             raise ValueError(message)
         log.warning("%s Proceeding because allow_flat_type_mismatch=True.",
                     message)
-        matched_flat = Frame(matched_flat.data, matched_flat.header.copy())
         matched_flat["FLATMISM"] = (True, "flat type does not match the band")
 
     if matched_flat.shape != frame.shape:
@@ -389,9 +402,21 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
     if matched_flat is None:
         reduced["FLATDIV"] = False
         flat_data = np.ones(reduced.shape)
+        flat_checked = flat_mismatch = False
     else:
         reduced["FLATDIV"] = True
         flat_data = matched_flat.data
+        flat_checked = bool(matched_flat.get("FLATCHK", False))
+        flat_mismatch = bool(matched_flat.get("FLATMISM", False))
+
+    # Whether the band flat-type rule was actually enforced, and whether a
+    # mismatch was waved through. Both are recorded always, the way DARKSUB
+    # and FLATDIV are, so "was this checked?" is answerable from the file
+    # rather than from whoever ran it.
+    reduced["FLATCHK"] = (flat_checked,
+                          "band flat-type requirement was checked")
+    reduced["FLATMISM"] = (flat_mismatch,
+                           "flat type does not match the band")
 
     reduced["SKYSUB"] = False
     if master_skies and not skip_sky_sub:
@@ -460,6 +485,7 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
                       if matched_flat is not None else "none"),
                 polflat=(matched_flat.get("POLFLAT")
                          if matched_flat is not None else None),
+                flat_checked=flat_checked, flat_mismatch=flat_mismatch,
                 gain=gain, saturation=saturation_limit,
                 div_coadds=div_coadds, div_itime=div_itime,
                 badpix=replacement_method)

@@ -79,6 +79,10 @@ def _format_value(value):
     return str(value)
 
 
+# marks a HISTORY card that continues the step above
+_CONTINUATION = "    "
+
+
 def record_step(target, step, **params):
     """Record one processing step in a header.
 
@@ -123,7 +127,8 @@ def record_step(target, step, **params):
     limit = 68  # HISTORY card payload
     while text:
         header.add_history(text[:limit])
-        text = ("    " + text[limit:]) if len(text) > limit else ""
+        text = ((_CONTINUATION + text[limit:])
+                if len(text) > limit else "")
     return header
 
 
@@ -138,12 +143,27 @@ def steps_of(target):
     Returns
     -------
     list of str
-        The ``DPP``-prefixed HISTORY lines, in the order they were written.
-        Other HISTORY cards, such as those astropy adds itself, are ignored.
+        The ``DPP``-prefixed HISTORY lines, in the order they were written,
+        with any continuation cards rejoined so a long parameter list reads
+        back whole. Other HISTORY cards, such as those astropy adds itself,
+        are ignored.
     """
     header = getattr(target, "header", target)
-    return [str(h) for h in header.get("HISTORY", [])
-            if str(h).startswith(_STEP_PREFIX)]
+    steps, in_step = [], False
+    for card in header.get("HISTORY", []):
+        text = str(card)
+        if text.startswith(_STEP_PREFIX):
+            steps.append(text)
+            in_step = True
+        elif in_step and text.startswith(_CONTINUATION):
+            # A wrapped continuation of the step above. Rejoining is not
+            # cosmetic: record_step splits long parameter lists across
+            # cards, so without this everything past the first card is
+            # invisible to every reader even though it is on disk.
+            steps[-1] += text[len(_CONTINUATION):]
+        else:
+            in_step = False
+    return steps
 
 
 def describe(target):

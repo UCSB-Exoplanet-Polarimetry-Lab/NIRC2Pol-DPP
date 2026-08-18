@@ -1,6 +1,7 @@
 """The audit trail: provenance headers, and the reject list."""
 
 import numpy as np
+from astropy.io import fits
 import pytest
 
 from utils.frame import Frame
@@ -114,3 +115,24 @@ def test_rejects_membership_works_for_load_frames(tmp_path):
     f = tmp_path / "r.toml"
     record_reject(str(f), "n0001.fits", "cloud")
     assert "n0001.fits" in load_rejects(str(f))
+
+
+def test_a_long_parameter_list_survives_the_round_trip():
+    """record_step wraps long lines across HISTORY cards. The reader has to
+    rejoin them: writing the data to disk is no use if every reader shows
+    only the first 68 characters, which is what happened before -- steps_of
+    filtered on the DPP prefix and the continuation cards do not carry it."""
+    header = fits.Header()
+    record_step(header, "dark/flat reduction",
+                dark="n1013.fits", flat="n0024.fits", polflat=True,
+                flat_checked=True, flat_mismatch=False, gain=8.0,
+                saturation=4500.0, div_coadds=True, div_itime=False,
+                badpix="interpolation")
+
+    assert len(header["HISTORY"]) > 1, "this list must be long enough to wrap"
+
+    step = steps_of(header)[0]
+    for expected in ("dark=n1013.fits", "flat_checked=T", "flat_mismatch=F",
+                     "badpix=interpolation"):
+        assert expected in step, f"{expected} lost in the wrap"
+    assert "    " not in step, "continuation padding leaked into the text"

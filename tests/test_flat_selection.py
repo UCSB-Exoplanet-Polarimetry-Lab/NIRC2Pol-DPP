@@ -10,9 +10,10 @@ import numpy as np
 import pytest
 
 from instruments.nirc2 import NIRC2PolarimetryData
-from reduction.calibrate import find_closest_flat
+from reduction.calibrate import find_closest_flat, reduce_frame
 from reduction.masters import flat_sort_key, required_flat_type_for
 from utils.frame import Frame
+from utils.provenance import describe
 
 # Which flat a band requires is a property of the instrument, not of the
 # reduction code, so the table comes from the instrument here exactly as it
@@ -46,7 +47,7 @@ def _science(filtername="Kp + Wollaston", band="Kp", n=64):
     """
     return Frame(np.ones((n, n)),
                  {"FILTER": filtername, "FWINAME": band, "NAXIS1": n,
-                  "NAXIS2": n, "FILENAME": "sci.fits"})
+                  "NAXIS2": n, "FILENAME": "sci.fits", "FRAMENO": 932})
 
 
 def _find_flat(*args, **kwargs):
@@ -199,3 +200,41 @@ def test_without_a_table_the_requirement_is_skipped_and_announced(caplog):
 def test_an_unlisted_band_falls_back_to_the_instrument_default():
     assert required_flat_type_for("NB2.108", flat_types=FLAT_TYPES,
                                   default=DEFAULT_FLAT_TYPE) == "LAMP"
+
+
+# --- the audit trail reaches the product -------------------------------
+
+def _reduce(science, flat, **kwargs):
+    """Reduce one frame against one flat, with no dark."""
+    return reduce_frame(science, [flat], [], div_coadds=False, **kwargs)
+
+
+def test_a_checked_reduction_records_that_it_was_checked():
+    """"Was this rule enforced?" has to be answerable from the file, not
+    from whoever happened to run it."""
+    reduced = _reduce(_science(), _flat(),
+                      required_flat_types=FLAT_TYPES,
+                      default_required_flat_type=DEFAULT_FLAT_TYPE)
+    assert reduced["FLATCHK"] is True
+    assert reduced["FLATMISM"] is False
+
+
+def test_a_skipped_check_is_recorded_on_the_reduced_frame():
+    """Without the instrument table the requirement cannot be evaluated. The
+    frame has to say so: a log line has scrolled away by the time anyone
+    asks."""
+    reduced = _reduce(_science(), _flat())
+    assert reduced["FLATCHK"] is False
+    assert "flat_checked=F" in describe(reduced)
+
+
+def test_an_overridden_mismatch_is_recorded_on_the_reduced_frame():
+    """Previously FLATMISM was stamped on a copy of the flat that
+    reduce_frame threw away, so the product carried no trace of it."""
+    reduced = _reduce(_science("Lp + Wollaston", "Lp"),
+                      _flat("Lp + Wollaston", "Lp", "LAMP"),
+                      required_flat_types=FLAT_TYPES,
+                      default_required_flat_type=DEFAULT_FLAT_TYPE,
+                      allow_flat_type_mismatch=True)
+    assert reduced["FLATMISM"] is True
+    assert reduced["FLATCHK"] is True
