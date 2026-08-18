@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 import os
 import re
+from configparser import ConfigParser
+from dataclasses import dataclass, field
 from datetime import date as _date
 
 import numpy as np
@@ -19,15 +21,66 @@ from astropy.io import fits
 
 log = logging.getLogger(__name__)
 
-PLATE_SCALE = 0.009942  # arcsec / pixel, narrow camera
+CONFIG_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "nirc2.ini")
+
+
+def read_config(path=CONFIG_PATH):
+    """Read an instrument constants file.
+
+    Parameters
+    ----------
+    path : str, optional
+        Path to the ``.ini``. Defaults to the one shipped beside this module.
+
+    Returns
+    -------
+    ConfigParser
+        The parsed file, with option names case-preserved.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the file is missing. The constants are not optional, and silently
+        falling back to hardcoded values would defeat the point of having
+        them in one auditable place.
+
+    Notes
+    -----
+    ``optionxform`` is overridden so option names keep their case. Band names
+    are option names here, and ConfigParser lowercases them by default, which
+    would make ``Lp`` and ``L`` collide with each other and stop matching what
+    :func:`band_of` returns.
+    """
+    parser = ConfigParser(inline_comment_prefixes=(";",))
+    parser.optionxform = str
+    if not parser.read(path):
+        raise FileNotFoundError(
+            f"NIRC2 instrument constants not found at {path}. This file "
+            "holds the plate scale, detector epochs and beam geometry, so "
+            "the module cannot be used without it.")
+    return parser
+
+
+_CONFIG = read_config()
+
+
+def _csv(section, option, cast=str):
+    """One comma-separated option as a tuple."""
+    return tuple(cast(v.strip())
+                 for v in _CONFIG.get(section, option).split(","))
+
+
+PLATE_SCALE = _CONFIG.getfloat("instrument", "plate_scale")
 
 # Keck observatory
-OBSERVATORY_LAT = +19.82525
-OBSERVATORY_LON = -155.468889
+OBSERVATORY_LAT = _CONFIG.getfloat("observatory", "latitude")
+OBSERVATORY_LON = _CONFIG.getfloat("observatory", "longitude")
 
 # narrowband filters with no flats of their own -> acceptable substitutes
 # (passed to reduction.calibrate.find_closest_flat / reduce_frame)
-FLAT_EXCEPTIONS = {"NB2.108": ("K + clear", "Ks + clear", "Kp + clear")}
+FLAT_EXCEPTIONS = {key: _csv("flat_exceptions", key)
+                   for key in _CONFIG["flat_exceptions"]}
 
 REQUIRED_HEADER_KEYWORDS = [
     "FILENAME", "FILTER", "ITIME", "COADDS", "NAXIS1", "NAXIS2",
@@ -39,7 +92,8 @@ _DEFAULT_BAD_PIXEL_MASK = os.path.join(
     "bad_pixel_mask_20230101.fits")
 
 # the detector was replaced in late 2023, changing gain and well depth
-_DETECTOR_SWAP_DATE = _date(2023, 11, 20)
+_DETECTOR_SWAP_DATE = _date.fromisoformat(
+    _CONFIG.get("detector", "swap_date"))
 
 # The polarimetry header keywords (PCUPR / PCUNAME, the HWP position) were
 # only added to the NIRC2 headers around 2025-12-01. Earlier polarimetry
@@ -47,7 +101,8 @@ _DETECTOR_SWAP_DATE = _date(2023, 11, 20)
 # "h_hwp_modulation_hwp_40.0" or "pol_cal_imr_hwp_h_imr_0.0_hwp_90.0".
 # The pipeline reads those as a fallback but warns, because other
 # polarimetric keywords may be missing too.
-POL_HEADER_EPOCH = _date(2025, 12, 1)
+POL_HEADER_EPOCH = _date.fromisoformat(
+    _CONFIG.get("polarimetry", "pol_header_epoch"))
 
 _HWP_IN_OBJECT = re.compile(r"hwp[_-](-?[\d.]+)\s*$", re.IGNORECASE)
 
@@ -95,22 +150,25 @@ def _parse_date(date_obs):
 
 
 def get_gain(date_obs):
-    """Detector gain in photoelectrons per ADU."""
-    return 4.0 if _parse_date(date_obs) < _DETECTOR_SWAP_DATE else 8.0
+    """Detector gain in photoelectrons per ADU, either side of the swap."""
+    before = _parse_date(date_obs) < _DETECTOR_SWAP_DATE
+    return _CONFIG.getfloat("detector",
+                            "gain_before" if before else "gain_after")
 
 
 def get_readnoise(sampmode):
     """Read noise in photoelectrons, by sampling mode."""
-    if sampmode == 2:
-        return 50.0
-    if sampmode == 3:
-        return 15.0
-    return 0.0
+    option = f"readnoise_sampmode_{sampmode}"
+    if not _CONFIG.has_option("detector", option):
+        option = "readnoise_default"
+    return _CONFIG.getfloat("detector", option)
 
 
 def get_saturation_limit(date_obs):
-    """Saturation / linearity limit in ADU."""
-    return 9000.0 if _parse_date(date_obs) < _DETECTOR_SWAP_DATE else 4500.0
+    """Saturation / linearity limit in ADU, either side of the swap."""
+    before = _parse_date(date_obs) < _DETECTOR_SWAP_DATE
+    return _CONFIG.getfloat(
+        "detector", "saturation_before" if before else "saturation_after")
 
 
 def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
@@ -123,7 +181,8 @@ def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
 # frame classification, from generic_reduce/01_sort_frames.jl
 #
 
-FLAT_ELEVATION = 45.0  # deg; dome flats are always taken at this elevation
+# deg; dome flats are always taken at this elevation
+FLAT_ELEVATION = _CONFIG.getfloat("instrument", "flat_elevation")
 
 
 def _small_angle_distance(a, b):
@@ -271,7 +330,8 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
 # north angle, from angles.jl (originally adapted from pyKLIP)
 #
 
-ZP_OFFSET = -0.262  # deg, narrow camera zero point from Service et al. 2016
+# deg, narrow camera zero point from Service et al. 2016
+ZP_OFFSET = _CONFIG.getfloat("instrument", "zp_offset")
 
 
 def _ten(value):
@@ -800,13 +860,8 @@ class NIRC2PolarimetryData(PolarimetryData):
 
 
 # Recommended background treatment per band (see PolarimetryData).
-RECOMMENDED_BACKGROUND = {
-    "Lp": ("dither", "mean_box"), "L": ("dither", "mean_box"),
-    "Ms": ("dither", "mean_box"), "M": ("dither", "mean_box"),
-    "J": ("annulus", "mean_box"), "H": ("annulus", "mean_box"),
-    "K": ("annulus", "mean_box"), "Kp": ("annulus", "mean_box"),
-    "Ks": ("annulus", "mean_box"),
-}
+RECOMMENDED_BACKGROUND = {band: _csv("background", band)
+                          for band in _CONFIG["background"]}
 
 
 def check_background_choice(band, method):
