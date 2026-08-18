@@ -38,6 +38,7 @@ from .registration import (
     find_center_symmetry,
     find_center_wings,
     find_center_smooth,
+    measure_beam_offset,
     median_combine,
     register_beam_stack,
     register_frames_to_template,

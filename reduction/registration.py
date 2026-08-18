@@ -693,7 +693,73 @@ def center_frames(frames, **kwargs):
     return [center_frame(f, **kwargs) for f in frames]
 
 
-def register_beam_stack(stack, method="smooth_peak", fill=0.0, **kwargs):
+def measure_beam_offset(stack, method="centroid", **kwargs):
+    """How far the star in beam 1 sits from the star in beam 0.
+
+    Locates the source independently in each beam of a ``(2, ny, nx)`` stack
+    and returns the difference. A correctly split stack measures ~0; anything
+    larger is an error in the beam extraction geometry, since the two beams
+    are two images of the same sky taken through one optic.
+
+    Parameters
+    ----------
+    stack : ndarray
+        ``(2, ny, nx)`` beam stack, beam 0 bottom and beam 1 top, as returned
+        by an instrument's ``split_beams``. Subtract the background first:
+        a threshold-based centroid on a raw thermal-background beam measures
+        the pedestal, which is common to both beams, and so reports ~0
+        however wrong the geometry is.
+    method : str, optional
+        Centering algorithm, as for :func:`find_center`. The default
+        ``"centroid"`` is chosen for this job rather than to match whatever
+        the reduction registers with: it is sub-pixel, cheap, and because it
+        weights the whole source its errors largely cancel in a difference
+        between two images of the same thing. Measured against a hand
+        centroid on real data it recovers the offset to 0.05 px with 0.04 px
+        scatter frame to frame.
+
+        Do not pass ``"smooth_peak"`` here. It reports whichever local
+        maximum is brightest, which on a saturated donut is a different rim
+        peak in each beam -- on real L-prime data that yields a spurious
+        17 px offset. ``"min"`` is no good either: it returns whole-pixel
+        positions, so it cannot see the sub-pixel disagreement this is for.
+    **kwargs
+        Passed to the centering algorithm.
+
+    Returns
+    -------
+    tuple of float
+        ``(dy, dx)`` in pixels, beam 1 minus beam 0. Add these to the
+        instrument's ``top_row_start`` and ``beam_x_offset`` to correct the
+        geometry -- both are plain additions, because beam 1 stack row *j*
+        is detector row ``j + top_row_start`` and stack column *j* is
+        detector column ``j + beam_x_offset``.
+
+    Notes
+    -----
+    This measures a *relative* offset, which is exactly what registration
+    cannot fix: :func:`register_beam_stack` finds one centre on the mean of
+    the two beams and shifts both by it, deliberately preserving whatever
+    offset lies between them. On a bright star the measurement repeats to
+    ~0.05 px between frames, so a residual above ~1 px is real.
+
+    The measurement is only as good as the centering method. On a source the
+    finder cannot lock onto -- a faint or extended target, or a saturated
+    core under the default ``"smooth_peak"`` -- the two beams can disagree
+    for reasons that have nothing to do with the geometry.
+    """
+    stack = np.asarray(stack, dtype=float)
+    if stack.ndim != 3 or stack.shape[0] != 2:
+        raise ValueError("expected a (2, ny, nx) beam stack, got shape "
+                         f"{stack.shape}")
+    cy0, cx0 = find_center(stack[0], method=method, **kwargs)
+    cy1, cx1 = find_center(stack[1], method=method, **kwargs)
+    return (cy1 - cy0, cx1 - cx0)
+
+
+def register_beam_stack(stack, method="smooth_peak", fill=0.0,
+                        check_beam_alignment=True, beam_alignment_tol=1.5,
+                        beam_alignment_method="centroid", **kwargs):
     """Center a ``(2, ny, nx)`` beam stack on the star.
 
         The star is located on the *mean* of the two beams and both beams are
@@ -708,6 +774,21 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0, **kwargs):
         Centering algorithm, as for :func:`find_center`.
     fill : float, optional
         Value for pixels shifted in from outside.
+    check_beam_alignment : bool, optional
+        Warn when the two beams are not aligned with each other, which means
+        the instrument's beam extraction geometry is wrong. On by default:
+        this function cannot fix such an offset and nothing downstream can
+        either, so silence would be the only other outcome.
+    beam_alignment_tol : float, optional
+        Offset in pixels above which to warn. The default of 1.5 clears the
+        ~0.7 px that integer row/column slicing can leave behind even when
+        the geometry is the best available, plus the measurement error, while
+        still catching the multi-pixel errors that matter.
+    beam_alignment_method : str, optional
+        Centering algorithm for the check, as for :func:`measure_beam_offset`.
+        Deliberately independent of ``method``: the algorithm that registers
+        best is not always one that can measure a sub-pixel offset, and
+        ``"min"`` and ``"smooth_peak"`` in particular cannot.
     **kwargs
         Passed to the centering algorithm.
 
@@ -729,6 +810,31 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0, **kwargs):
     stack = np.asarray(stack, dtype=float)
     mean_beam = np.nanmean(stack, axis=0)
     cy, cx = find_center(mean_beam, method=method, **kwargs)
+
+    # The two beams are one sky through one optic, so any offset between
+    # them is a beam-extraction error. Shifting both by a single offset
+    # preserves it by design, and the double difference then turns it into a
+    # dipole, so warn here -- this is the last point where the two beams are
+    # still separable. A finder that fails on one beam is not evidence of
+    # anything, so a failure to measure is not reported.
+    if check_beam_alignment:
+        try:
+            dy, dx = measure_beam_offset(stack, method=beam_alignment_method)
+        except Exception:
+            pass
+        else:
+            if np.hypot(dy, dx) > beam_alignment_tol:
+                log.warning(
+                    "Beams are misaligned by (dy=%+.2f, dx=%+.2f) px, above "
+                    "the %.2f px tolerance: the beam extraction geometry is "
+                    "probably wrong. Registration shifts both beams "
+                    "together, so this offset will survive into the double "
+                    "difference as a dipole. Add these to the instrument's "
+                    "top_row_start and beam_x_offset (see "
+                    "instrument.fit_beam_geometry), or pass "
+                    "check_beam_alignment=False if the source is one that "
+                    "%r centering cannot locate per beam.",
+                    dy, dx, beam_alignment_tol, beam_alignment_method)
 
     # Sanity check: a centre far from the flux-weighted position of the
     # source usually means the finder locked onto the frame rather than the

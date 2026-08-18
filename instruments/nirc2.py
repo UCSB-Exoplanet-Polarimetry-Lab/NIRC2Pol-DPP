@@ -463,12 +463,19 @@ class NIRC2PolarimetryData(PolarimetryData):
     # enters the model with a factor 2, not 4
     rotator_keyword = "ROTPDEST"
 
-    # beam extraction geometry (detector rows/columns); tune per epoch by
-    # checking the beam alignment on a bright star
+    # Beam extraction geometry (detector rows/columns). The two values that
+    # control *alignment* deliberately have no default: they drift between
+    # epochs, and a wrong one fails silently -- the beams come out misaligned,
+    # registration cannot repair it because it shifts both beams together to
+    # preserve their relative alignment, and the double difference turns the
+    # offset into a dipole that inflates U_phi and fakes a bright core in
+    # Q_phi. Measure them per epoch with :meth:`fit_beam_geometry` and set
+    # them explicitly. Known values: 2025-12-07 L' = (504, 12),
+    # 2026 H = (536, 14).
     beam_height = 450       # rows in each beam cutout
     bottom_row_start = 0    # bottom beam: rows [0, beam_height)
-    top_row_start = 508     # top beam: rows [start, start + beam_height)
-    beam_x_offset = 13      # horizontal shift of top beam relative to bottom
+    top_row_start = None    # top beam: rows [start, start + beam_height)
+    beam_x_offset = None    # horizontal shift of top beam relative to bottom
 
     # HWP fast axis offset theta_off [deg] entering the rotation model.
     # There is no trusted automatic source for this: it must be determined
@@ -590,23 +597,146 @@ class NIRC2PolarimetryData(PolarimetryData):
             f"({header.get('OBJECT')!r}). Data before {POL_HEADER_EPOCH} "
             f"needs special handling.")
 
-    def split_beams(self, frame):
-        """Cut out the ordinary and extraordinary beams and register them:
-        returns a ``(2, beam_height, nx - beam_x_offset)`` array with
-        beam 0 = bottom, beam 1 = top, the top beam shifted by
-        ``beam_x_offset`` columns so both cover the same sky."""
-        data = frame.data if hasattr(frame, "data") else np.asarray(frame)
+    def split_beams(self, frame, top_row_start=None, beam_x_offset=None):
+        """Cut out the ordinary and extraordinary beams and register them.
+
+        Parameters
+        ----------
+        frame : Frame or ndarray
+            Full detector frame.
+        top_row_start : int, optional
+            First detector row of the top beam. Defaults to the instrument
+            attribute; pass it explicitly to try a trial geometry, as
+            :meth:`fit_beam_geometry` does.
+        beam_x_offset : int, optional
+            Column shift of the top beam relative to the bottom one.
+            Defaults to the instrument attribute.
+
+        Returns
+        -------
+        ndarray
+            ``(2, beam_height, nx - beam_x_offset)``, beam 0 = bottom and
+            beam 1 = top, the top beam shifted by ``beam_x_offset`` columns
+            so both cover the same sky.
+
+        Raises
+        ------
+        ValueError
+            If the geometry is unset. There is no safe default: the values
+            drift between epochs and a wrong one misaligns the beams
+            silently.
+
+        Notes
+        -----
+        Nothing downstream can undo an error here. Registration shifts both
+        beams by a single offset in order to preserve their relative
+        alignment, so a residual offset between them survives into the
+        double difference as a dipole.
+        """
+        top_row_start = (self.top_row_start if top_row_start is None
+                         else top_row_start)
+        beam_x_offset = (self.beam_x_offset if beam_x_offset is None
+                         else beam_x_offset)
+        if top_row_start is None or beam_x_offset is None:
+            raise ValueError(
+                f"{type(self).__name__} has no beam geometry: "
+                f"top_row_start={top_row_start!r}, "
+                f"beam_x_offset={beam_x_offset!r}. These drift between "
+                "epochs and there is deliberately no default, because a "
+                "wrong value misaligns the two beams silently and no later "
+                "step can recover it. Set them on the instrument, measuring "
+                "them with instrument.fit_beam_geometry(frame, top, xoff) "
+                "from a trial guess on a frame with a bright compact "
+                "source. Known values: 2025-12-07 L' = (504, 12), "
+                "2026 H = (536, 14).")
+
+        # NB: test for the header, not for .data -- every ndarray has a
+        # .data attribute (its raw buffer), so keying on that sends plain
+        # arrays down the Frame branch and yields an unsliceable memoryview.
+        data = np.asarray(frame.data if hasattr(frame, "header") else frame)
 
         bottom = data[self.bottom_row_start:
                       self.bottom_row_start + self.beam_height, :]
-        top = data[self.top_row_start:
-                   self.top_row_start + self.beam_height, :]
+        top = data[top_row_start:top_row_start + self.beam_height, :]
 
         stack = np.zeros((2, self.beam_height,
-                          bottom.shape[1] - self.beam_x_offset))
-        stack[0] = bottom[:, :-self.beam_x_offset]
-        stack[1] = top[:, self.beam_x_offset:]
+                          bottom.shape[1] - beam_x_offset))
+        stack[0] = bottom[:, :-beam_x_offset]
+        stack[1] = top[:, beam_x_offset:]
         return stack
+
+    def fit_beam_geometry(self, frame, top_row_start, beam_x_offset,
+                          method="centroid", **kwargs):
+        """Refine a trial beam geometry on a frame with a bright, compact
+        source.
+
+        Splits the frame with the trial values, measures how far the star in
+        the top beam sits from the star in the bottom beam, and folds that
+        residual back into the geometry. Iterating is unnecessary: the
+        measurement is a pure translation, so one pass is exact up to the
+        rounding to whole pixels.
+
+        Parameters
+        ----------
+        frame : Frame or ndarray
+            A frame with one bright, compact, unsaturated-or-donut source.
+            The instrument's background setting is applied to the split
+            beams before measuring, so configure it first: on a raw L-prime
+            beam the thermal pedestal swamps the star and the measurement
+            silently returns ~0.
+        top_row_start, beam_x_offset : int
+            Trial geometry to refine. A neighbouring epoch's values are a
+            good starting point; the search is local, so a trial more than
+            about half a PSF away may lock onto the wrong feature.
+        method : str, optional
+            Centering algorithm, as for
+            :func:`reduction.measure_beam_offset`, whose default
+            ``"centroid"`` is used here. This is not the method you
+            register with: ``"smooth_peak"`` reports a different donut rim
+            peak in each beam, and ``"min"`` returns whole pixels, so
+            neither can measure a sub-pixel offset between the beams.
+        **kwargs
+            Passed to the centering algorithm.
+
+        Returns
+        -------
+        tuple of int
+            ``(top_row_start, beam_x_offset)``, rounded to whole pixels
+            because :meth:`split_beams` slices on integers.
+
+        Notes
+        -----
+        Check the result by re-running: a correct geometry measures a
+        residual offset of well under a pixel. On a single bright star the
+        repeatability is ~0.05 px frame to frame, so a residual above ~1 px
+        is real and worth chasing.
+        """
+        from reduction.registration import measure_beam_offset
+        # Subtract the background first. A threshold-based centroid on a
+        # raw L-prime beam measures the thermal pedestal, which is common to
+        # both beams, so the offset comes back as ~0 and the geometry looks
+        # perfect no matter how wrong it is.
+        stack = self.subtract_background(
+            self.split_beams(frame, top_row_start=top_row_start,
+                             beam_x_offset=beam_x_offset))
+        dy, dx = measure_beam_offset(stack, method=method, **kwargs)
+        exact_top, exact_x = top_row_start + dy, beam_x_offset + dx
+
+        # The true geometry is rarely an integer, so report what was actually
+        # measured: a value near a half pixel is a genuine tie that rounding
+        # decides arbitrarily, and the caller deserves to know that rather
+        # than trusting a confident-looking integer.
+        log.info("beam geometry measured at top_row_start=%.2f, "
+                 "beam_x_offset=%.2f", exact_top, exact_x)
+        for name, value in (("top_row_start", exact_top),
+                            ("beam_x_offset", exact_x)):
+            if abs(value - np.floor(value) - 0.5) < 0.15:
+                log.warning(
+                    "Measured %s = %.2f falls between pixels, so rounding it "
+                    "either way leaves about half a pixel of beam "
+                    "misalignment. Compare both by reducing with each and "
+                    "checking which gives less U_phi.", name, value)
+        return int(round(exact_top)), int(round(exact_x))
 
     def occulting_radius(self, header):
         """Occulting mask radius [px] from SLITNAME, or None if unocculted.

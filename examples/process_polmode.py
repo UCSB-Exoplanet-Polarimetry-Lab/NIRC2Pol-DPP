@@ -69,8 +69,11 @@ BACKGROUND_ANNULUS = None             # (r_inner, r_outer) px, for "annulus"
 # Registration finds one centre on the mean of the two beams and shifts both
 # by it, preserving their relative alignment, so a relative offset between
 # them is never corrected: it goes straight into the double difference as a
-# dipole, inflating U_phi and faking a bright core in Q_phi. Check it by
-# centroiding the star in each beam of one split frame.
+# dipole, inflating U_phi and faking a bright core in Q_phi. There is no
+# default to fall back on -- split_beams raises until these are set. Measure
+# them with instrument.fit_beam_geometry(frame, top_guess, x_guess), starting
+# from a neighbouring epoch; register_beam_stack also re-checks on every call
+# and warns if the two beams disagree.
 BEAM_TOP_ROW = 504    # first detector row of the top beam
 BEAM_X_OFFSET = 12    # column shift of the top beam relative to the bottom
 

@@ -75,7 +75,7 @@ class SyntheticPolarimetryData(PolarimetryData):
         ndarray
             ``(2, ny, nx)``, beam 0 bottom and beam 1 top.
         """
-        data = frame.data if hasattr(frame, "data") else np.asarray(frame)
+        data = np.asarray(frame.data if hasattr(frame, "header") else frame)
         return np.stack([data[:NY], data[NY:]])
 
     def qu_rotation_angle(self, header, fast_axis_offset=0.0):
