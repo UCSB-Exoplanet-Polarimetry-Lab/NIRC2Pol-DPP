@@ -291,3 +291,48 @@ def test_orchestrator_matches_the_function_chain(synthetic_night):
     assert not np.allclose(np.nan_to_num(pipe.context["stokes"]),
                            np.nan_to_num(direct)), \
         "run(from_step=...) appears to have rerun the earlier steps"
+
+
+def test_a_recipe_must_measure_the_beam_geometry(synthetic_night):
+    """The orchestrator test above uses an instrument with the geometry
+    already set, so it cannot catch a recipe that never measures it -- which
+    is what a real reduction through Pipeline hit once the per-epoch lookup
+    was removed. This covers the documented shape instead: without a geometry
+    step the first split refuses, and with one it goes through.
+    """
+    from reduction import fit_beam_geometry
+
+    files = sorted(glob.glob(os.path.join(str(synthetic_night["dir"]),
+                                          "*.fits")))
+    configured = synthetic_night["instrument"]
+
+    class Unmeasured(type(configured)):
+        """As an instrument arrives before anything has measured it."""
+
+        top_row_start = None
+        beam_x_offset = None
+
+    def build(with_geometry):
+        inst = Unmeasured()
+        pipe = (Pipeline({"instrument": inst})
+                .add_step("sort", lambda c: c["instrument"].sort_frames(files))
+                .add_step("reduce", lambda c: load_frames(c["sort"]["sci"])))
+        if with_geometry:
+            def step_geometry(ctx):
+                one = ctx["instrument"]
+                one.top_row_start, one.beam_x_offset = fit_beam_geometry(
+                    one, ctx["reduce"],
+                    configured.top_row_start, configured.beam_x_offset)
+                return one.top_row_start, one.beam_x_offset
+            pipe.add_step("geometry", step_geometry)
+        pipe.add_step("split",
+                      lambda c: c["instrument"].split_beams(c["reduce"][0]))
+        return pipe
+
+    with pytest.raises(ValueError, match="fit_beam_geometry"):
+        build(with_geometry=False).run()
+
+    ctx = build(with_geometry=True).run()
+    assert ctx["geometry"] == (configured.top_row_start,
+                               configured.beam_x_offset)
+    assert ctx["split"].shape[0] == 2

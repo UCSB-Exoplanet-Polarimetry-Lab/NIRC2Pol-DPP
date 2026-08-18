@@ -9,6 +9,8 @@ product::
     pipe = Pipeline({"paths": paths, "instrument": nirc2.NIRC2PolarimetryData()})
     pipe.add_step("sort", lambda ctx: ctx["instrument"].sort_frames(raw_files))
     pipe.add_step("masters", make_masters_step)
+    pipe.add_step("reduce", reduce_step)
+    pipe.add_step("geometry", measure_geometry_step)
     ...
     pipe.run()
     reduced = pipe.context["reduce"]
@@ -17,10 +19,20 @@ Every step is optional and replaceable: for a custom reduction, skip the
 orchestrator entirely and call the module functions directly (see
 examples/process_polmode.py).
 
-The bare instrument above is enough to sort frames. Any step that splits the
-Wollaston beams also needs the beam geometry, which is read per epoch from
-instruments/nirc2.ini and will refuse rather than guess if that epoch is not
-recorded.
+The bare instrument above is enough to sort frames and reduce them. Anything
+that splits the Wollaston beams needs the beam geometry first, and that is
+measured from the reduced frames rather than configured or looked up, so a
+recipe needs a step for it::
+
+    def measure_geometry_step(ctx):
+        inst = ctx["instrument"]
+        inst.top_row_start, inst.beam_x_offset = fit_beam_geometry(
+            inst, ctx["reduce"])
+        return inst.top_row_start, inst.beam_x_offset
+
+Without it, the first step to call ``split_beams`` refuses rather than
+guessing -- a wrong geometry misaligns the two beams in a way nothing
+downstream can undo, so it is not something to default.
 """
 
 from __future__ import annotations
