@@ -20,13 +20,13 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-def read_config(path=None):
+def read_config(path):
     """Read an instrument constants file.
 
     Parameters
     ----------
     path : str, optional
-        Path to the ``.ini``. Defaults to NIRC2, so this method may be re-used when creating a new instruments module.
+        Path to the ``.ini``. Currently defaults to NIRC2, but this method may be re-used when creating a new instruments module.
 
     Returns
     -------
@@ -241,7 +241,7 @@ class PolarimetryData(ABC):
         return None
 
     @abstractmethod
-    def qu_rotation_angle(self, header, fast_axis_offset=0.0):
+    def qu_rotation_angle(self, header, fast_axis_offset=None):
         """Angle [deg] by which the measured polarization frame is rotated
         relative to sky for a frame — the instrument's Mueller-matrix (or
         rotation-approximation) model. Used by

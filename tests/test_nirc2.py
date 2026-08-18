@@ -1,6 +1,10 @@
 """NIRC2-specific header interpretation."""
 
+import logging
+
 import numpy as np
+
+from utils import Frame
 import pytest
 
 from instruments.nirc2 import (PLATE_SCALE, band_of, calculate_north_angle,
@@ -122,3 +126,53 @@ def test_unknown_rotator_mode_raises():
     """An unrecognised rotator mode raises rather than guessing."""
     with pytest.raises(ValueError, match="Unknown rotator mode"):
         calculate_north_angle(_pa_header("nonsense"))
+
+
+# --- the uncalibrated fast axis must not pass silently ---------------------
+
+def _rot_header():
+    return Frame(np.zeros((4, 4)),
+                 {"PARANG": 10.0, "EL": 45.0, "ROTPDEST": 0.0}).header
+
+
+def test_unspecified_fast_axis_offset_warns(caplog):
+    """Reducing at theta_off = 0 leaves Q/U in the instrument frame, so the
+    polarization angles mean nothing. Saying so is the whole point."""
+    NIRC2PolarimetryData.reset_warnings()
+    with caplog.at_level(logging.WARNING):
+        NIRC2PolarimetryData().qu_rotation_angle(_rot_header())
+    assert any("uncalibrated" in r.getMessage() for r in caplog.records)
+
+
+def test_an_explicit_offset_does_not_warn(caplog):
+    """A measured value is not a missed calibration."""
+    NIRC2PolarimetryData.reset_warnings()
+    with caplog.at_level(logging.WARNING):
+        NIRC2PolarimetryData().qu_rotation_angle(_rot_header(), -13.0)
+    assert not any("uncalibrated" in r.getMessage() for r in caplog.records)
+
+
+def test_a_deliberate_zero_does_not_warn(caplog):
+    """polarimetry.fast_axis evaluates the rotation at zero offset before
+    scanning, which is a request rather than an omission."""
+    NIRC2PolarimetryData.reset_warnings()
+    with caplog.at_level(logging.WARNING):
+        NIRC2PolarimetryData().qu_rotation_angle(_rot_header(), 0.0)
+    assert not any("uncalibrated" in r.getMessage() for r in caplog.records)
+
+
+def test_the_cube_builders_default_to_unspecified_not_zero():
+    """These defaults were 0.0, which is indistinguishable from a deliberate
+    zero by the time it reaches qu_rotation_angle -- so the warning could
+    never fire on the ordinary path, which is the only path most people use.
+    """
+    import inspect
+
+    from polarimetry.stokes import build_stokes_cube, build_stokes_cubes
+
+    for func in (build_stokes_cube, build_stokes_cubes):
+        default = inspect.signature(func).parameters["fast_axis_offset"].default
+        assert default is None, (
+            f"{func.__name__} defaults to {default!r}; a literal zero here "
+            "silences the uncalibrated-offset warning for every caller who "
+            "does not pass one")

@@ -253,7 +253,7 @@ def rotate_qu(Q, U, theta_rot_deg):
     return q_sky, u_sky
 
 
-def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
+def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
                       critical_angles=CRITICAL_ANGLES, atol=1.0,
                       register_method="smooth_peak", derotate=True,
                       register_kwargs=None, ip=None,
@@ -300,8 +300,16 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
                                 register_kwargs=register_kwargs, ip=ip,
                                 ip_frame_annulus=ip_frame_annulus)
 
+    # None rather than 0.0 as the default, so that "not specified" stays
+    # distinguishable all the way down to qu_rotation_angle. A literal 0.0
+    # is a deliberate request -- the fast axis solver evaluates the rotation
+    # at zero offset before scanning -- whereas None means nobody chose, and
+    # only the second case should warn. With 0.0 as the default here the
+    # warning could never fire on the ordinary path.
     theta_rot = float(mean_angle(
         [instrument.qu_rotation_angle(f, fast_axis_offset) for f in cycle]))
+    effective_offset = (instrument.fast_axis_offset if fast_axis_offset is None
+                        else fast_axis_offset)
     q_sky, u_sky = rotate_qu(Q, U, theta_rot)
 
     north = None
@@ -325,7 +333,7 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
                 background=instrument.describe_background(),
                 critical_angles=list(critical_angles),
                 registration=register_method,
-                fast_axis_offset=fast_axis_offset,
+                fast_axis_offset=effective_offset,
                 instrumental_polarization=(ip.describe() if ip is not None
                                            else "none"),
                 ip_frame_annulus=(str(ip_frame_annulus)
@@ -336,7 +344,8 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=0.0,
     return np.stack([I, q_sky, u_sky], axis=0)
 
 
-def build_stokes_cubes(instrument, cycles, fast_axis_offset=0.0, **kwargs):
+def build_stokes_cubes(instrument, cycles, fast_axis_offset=None,
+                       **kwargs):
     """Stokes cubes for every HWP cycle: returns a ``(ncycles, 3, ny, nx)``
         array.
 

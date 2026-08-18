@@ -1,7 +1,7 @@
 """Everything NIRC2/Keck-specific: detector constants, the bad pixel mask,
 frame classification from headers, and the north angle calculation.
 
-Translated from AIR.jl's NIRC2.jl, constants.jl, angles.jl, and
+Partially translated from AIR.jl's NIRC2.jl, constants.jl, angles.jl, and
 generic_reduce/01_sort_frames.jl. The generic reduction code in
 ``reduction/`` takes these values as parameters, so supporting another
 instrument means writing a module like this one.
@@ -36,9 +36,6 @@ OBSERVATORY_LAT = _CONFIG.getfloat("observatory", "latitude")
 OBSERVATORY_LON = _CONFIG.getfloat("observatory", "longitude")
 
 # Which flat type each band requires, and the fallback for unlisted bands.
-# Read as a scalar, not with config_csv: a band requires one type, and a
-# one-element tuple would never compare equal to the FLATTYPE string read off
-# a flat, so every correctly flat-fielded frame would be refused.
 DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG.get("flat_type", "default_flat_type").strip().upper()
 REQUIRED_FLAT_TYPE_BY_BAND = {
     band: _CONFIG.get("flat_type", band).strip().upper()
@@ -368,10 +365,6 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
         required header keywords are dropped with a warning.
 
         Lamp-on flats stay in ``flats_lampon`` and become LAMP-type masters.
-        They used to be moved into the generic ``flats`` bucket whenever no
-        lamp-off frames existed, which is always -- and since that bucket is
-        tagged REGULAR, the band's required flat type then matched nothing and
-        the requirement was silently inert.
 
     Classify raw files by type, from their headers.
 
@@ -420,10 +413,6 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
     return sorted_files
 
 
-#
-# north angle, from angles.jl (originally adapted from pyKLIP)
-#
-
 # deg, narrow camera zero point from Service et al. 2016
 ZP_OFFSET = _CONFIG.getfloat("instrument", "zp_offset")
 
@@ -438,6 +427,8 @@ def calculate_north_angle(header):
     exposure (a single-element list when there is no smear).
 
     Derotate an image by rotating it by ``-mean_angle``.
+
+    Adapted from angles.jl in AIR.jl and pyklip
     """
     rotator_mode = header["ROTMODE"]
     rotator_position = header["ROTPOSN"]  # deg
@@ -579,15 +570,8 @@ class NIRC2PolarimetryData(PolarimetryData):
     # enters the model with a factor 2, not 4
     rotator_keyword = "ROTPDEST"
 
-    # Beam extraction geometry (detector rows/columns). The two values that
-    # control *alignment* deliberately have no default: they drift between
-    # epochs, and a wrong one fails silently -- the beams come out misaligned,
-    # registration cannot repair it because it shifts both beams together to
-    # preserve their relative alignment, and the double difference turns the
-    # offset into a dipole that inflates U_phi and fakes a bright core in
-    # Q_phi. Measure them per epoch with :meth:`fit_beam_geometry` and set
-    # them explicitly. Known values: 2025-12-08 UT L' = (504, 12),
-    # 2026 H = (536, 14).
+    # Beam extraction geometry (detector rows/columns). Measure per epoch with :meth:`fit_beam_geometry` and set
+    # them explicitly.
     _announced_beam_geometry = False
 
     beam_height = 450       # rows in each beam cutout
@@ -596,11 +580,8 @@ class NIRC2PolarimetryData(PolarimetryData):
     beam_x_offset = None    # horizontal shift of top beam relative to bottom
 
     # HWP fast axis offset theta_off [deg] entering the rotation model.
-    # There is no trusted automatic source for this: it must be determined
-    # on sky and set explicitly. Ladder calibrations were removed because
-    # the fitted phase is theta_off + chi/2 with chi, the incident
-    # polarization angle in the instrument frame, unknown for an internal
-    # source.
+    # There is no trusted automatic source for this yet: it must be determined
+    # on sky and set explicitly. 
     fast_axis_offset = 0.0
 
     def gain(self, header):
@@ -853,10 +834,7 @@ class NIRC2PolarimetryData(PolarimetryData):
         is real and worth chasing.
         """
         from reduction.registration import measure_beam_offset
-        # Subtract the background first. A threshold-based centroid on a
-        # raw L-prime beam measures the thermal pedestal, which is common to
-        # both beams, so the offset comes back as ~0 and the geometry looks
-        # perfect no matter how wrong it is.
+        # Subtract the background first.
         stack = self.subtract_background(
             self.split_beams(frame, top_row_start=top_row_start,
                              beam_x_offset=beam_x_offset))
@@ -864,9 +842,7 @@ class NIRC2PolarimetryData(PolarimetryData):
         exact_top, exact_x = top_row_start + dy, beam_x_offset + dx
 
         # The true geometry is rarely an integer, so report what was actually
-        # measured: a value near a half pixel is a genuine tie that rounding
-        # decides arbitrarily, and the caller deserves to know that rather
-        # than trusting a confident-looking integer.
+        # measured
         log.info("beam geometry measured at top_row_start=%.2f, "
                  "beam_x_offset=%.2f", exact_top, exact_x)
         for name, value in (("top_row_start", exact_top),
@@ -875,8 +851,7 @@ class NIRC2PolarimetryData(PolarimetryData):
                 log.warning(
                     "Measured %s = %.2f falls between pixels, so rounding it "
                     "either way leaves about half a pixel of beam "
-                    "misalignment. Compare both by reducing with each and "
-                    "checking which gives less U_phi.", name, value)
+                    "misalignment", name, value)
         return int(round(exact_top)), int(round(exact_x))
 
     def occulting_radius(self, header):
@@ -947,10 +922,6 @@ RECOMMENDED_BACKGROUND = {band: config_csv(_CONFIG, "background", band)
 
 def check_background_choice(band, method):
     """Warn if a background method is a poor fit for the observing band.
-
-        L' and M sit on a large, structured thermal pedestal, so they need
-        dither-pair subtraction or at least a mean box; in JHK an annulus
-        around the source is usually cleanest.
 
     Parameters
     ----------
