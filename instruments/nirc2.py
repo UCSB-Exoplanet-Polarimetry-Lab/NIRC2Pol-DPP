@@ -591,22 +591,13 @@ class NIRC2PolarimetryData(PolarimetryData):
         Raises
         ------
         ValueError
-            If the geometry is unset. There is no safe default: the values
-            drift between epochs and a wrong one misaligns the beams
-            silently.
+            If the geometry is unset
 
         Notes
         -----
         The geometry has to be set before this is called. It is measured
         from the data by :func:`reduction.fit_beam_geometry`, which is a
-        standard step of the reduction rather than a value looked up: the
-        separation moves between epochs, and a number written down once goes
-        stale without saying so.
-
-        Nothing downstream can undo an error here. Registration shifts both
-        beams by a single offset in order to preserve their relative
-        alignment, so a residual offset between them survives into the
-        double difference as a dipole.
+        standard step of the reduction
         """
         top_row_start = (self.top_row_start if top_row_start is None
                          else top_row_start)
@@ -617,15 +608,10 @@ class NIRC2PolarimetryData(PolarimetryData):
                 f"{type(self).__name__} has no beam geometry "
                 f"(top_row_start={top_row_start!r}, "
                 f"beam_x_offset={beam_x_offset!r}). It is measured from the "
-                "data rather than defaulted, because the separation moves "
-                "between epochs and a wrong value misaligns the beams in a "
-                "way no later step can undo. Measure it with "
+                "data rather than defaulted. Measure it with "
                 "reduction.fit_beam_geometry(instrument, frames) and assign "
                 "the result before reducing.")
-
-        # NB: test for the header, not for .data -- every ndarray has a
-        # .data attribute (its raw buffer), so keying on that sends plain
-        # arrays down the Frame branch and yields an unsliceable memoryview.
+        
         data = np.asarray(frame.data if hasattr(frame, "header") else frame)
 
         bottom = data[self.bottom_row_start:
@@ -645,12 +631,6 @@ class NIRC2PolarimetryData(PolarimetryData):
         ----------
         header : Header
             A frame from the dataset, for reading its band.
-
-        Notes
-        -----
-        L-prime and M sit on a large structured thermal pedestal and need
-        dithers or at least a mean box; in JHK an annulus around the source
-        is usually cleanest. See :data:`RECOMMENDED_BACKGROUND`.
         """
         if type(self)._warned_background_choice:
             return

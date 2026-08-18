@@ -20,6 +20,9 @@ each step is easy to run and inspect on its own (e.g. in a notebook):
     7. median Stokes cube, PI / AoLP / DoLP and radial Stokes, written with
        full provenance by ``ProductWriter``
 
+Everything the run reports is also written to one log file beside the
+products, so the choices it made survive the terminal session.
+
 There is deliberately no separate sky-subtraction step. The background is a
 property of the instrument (``BACKGROUND_METHOD`` below) and is applied to
 each Wollaston beam inside the Stokes builder, which calls
@@ -46,7 +49,8 @@ from polarimetry import (ProductWriter, build_stokes_cubes,
 from reduction import (fit_beam_geometry, make_master_darks,
                        make_master_flats,
                        make_master_masks, make_master_skies, reduce_frame)
-from utils import ObslogPaths, load_frames, load_rejects, save_frames
+from utils import (ObslogPaths, load_frames, load_rejects, save_frames,
+                   start_reduction_log)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("process_polmode")
@@ -125,6 +129,18 @@ instrument = NightPolData()
 paths = ObslogPaths(OBSERVATIONS_FOLDER, DATE)
 paths.make_folders()
 rejects = load_rejects(paths.rejects_file)
+
+# Everything the reduction reports -- which flat it matched, whether the band
+# requirement was enforced, the beam geometry it measured, any centering
+# fallback -- lands in one file beside the products. The console still shows
+# it too; this is the copy that survives the terminal.
+run_log = start_reduction_log(paths.log_file)
+run_log.settings(date=DATE, target=TARGET, instrument=type(instrument).__name__,
+                 background=instrument.describe_background(),
+                 theta_off=THETA_OFF, fit_on_sky=FIT_ON_SKY,
+                 use_master_skies=USE_MASTER_SKIES,
+                 register_method=REGISTER_METHOD,
+                 beam_top_row=BEAM_TOP_ROW, beam_x_offset=BEAM_X_OFFSET)
 log.info("background: %s", instrument.describe_background())
 if instrument.top_row_start is not None:
     log.info("beam geometry overridden: top row %s, x offset %s",
@@ -237,5 +253,8 @@ writer.save_stokes_cycles(stokes_cubes, cycles, header=header)
 writer.save_median_stokes(median_cube, header=header)
 writer.save_derived_products(median_cube, header=header)
 
+run_log.finish()
+
 print(f"Done: {len(stokes_cubes)} HWP cycles -> Stokes products in "
       f"{writer.output_dir}")
+print(f"Log:  {run_log.path} ({run_log.warnings} warnings)")

@@ -169,9 +169,7 @@ class PolarimetryData(ABC):
         Notes
         -----
         Does nothing by default. An instrument that knows which methods suit
-        which of its bands overrides this; one that does not simply stays
-        quiet, which is the honest outcome rather than the silence that came
-        of the caller swallowing every exception.
+        which of its bands overrides this
 
         Warns once per instrument class, via a ``_warned_*`` flag so that
         :meth:`reset_warnings` clears it along with the others.
@@ -190,8 +188,7 @@ class PolarimetryData(ABC):
         Notes
         -----
         A method rather than the caller reading attributes: how the two
-        beams are separated is the instrument's business, and another one
-        may not describe it with rows and columns at all.
+        beams are separated is the instrument's business
         """
         return ""
 
