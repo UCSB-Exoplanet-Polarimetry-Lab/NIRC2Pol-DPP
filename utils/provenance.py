@@ -79,7 +79,58 @@ def _format_value(value):
     return str(value)
 
 
-def record_step(target, step, **params):
+# marks a HISTORY card that continues the step above
+_CONTINUATION = "    "
+
+
+def drop_step(target, step):
+    """Remove any previously recorded instance of one step.
+
+    Parameters
+    ----------
+    target : Frame or astropy.io.fits.Header
+        Product to edit.
+    step : str
+        Step name, as passed to :func:`record_step`.
+
+    Returns
+    -------
+    int
+        How many records were removed.
+
+    Notes
+    -----
+    Preserves HISTORY cards that are not ours, and removes a wrapped step
+    whole -- its continuation cards go with it, or the leftovers would be
+    reattached to whatever step happened to precede them.
+    """
+    header = getattr(target, "header", target)
+    cards = [str(h) for h in header.get("HISTORY", [])]
+    if not cards:
+        return 0
+
+    prefix = f"{_STEP_PREFIX}{step}"
+    kept, removed, dropping = [], 0, False
+    for text in cards:
+        if text.startswith(_STEP_PREFIX):
+            dropping = text.startswith(prefix)
+            removed += dropping
+            if not dropping:
+                kept.append(text)
+        elif dropping and text.startswith(_CONTINUATION):
+            continue                      # a continuation of the dropped step
+        else:
+            dropping = False
+            kept.append(text)
+
+    if removed:
+        del header["HISTORY"]
+        for text in kept:
+            header.add_history(text)
+    return removed
+
+
+def record_step(target, step, replace=False, **params):
     """Record one processing step in a header.
 
     Parameters
@@ -91,6 +142,12 @@ def record_step(target, step, **params):
         ``"stokes cube"``.
     **params
         Settings worth reproducing, rendered by :func:`_format_value`.
+    replace : bool, optional
+        Drop any earlier record of this same step first. Use it for a step
+        that can be re-run over the same frames -- rebuilding a Stokes cube
+        at several fast axis offsets would otherwise leave several records
+        that contradict each other, with nothing to say which one produced
+        the data in hand.
 
     Returns
     -------
@@ -101,7 +158,10 @@ def record_step(target, step, **params):
     -----
     Appends a HISTORY card of the form::
 
-        DPP <step>: key=value, key=value   [2026-07-29T04:12:33]
+        DPP <step>: key=value, key=value   [2026-07-29T04:12:33Z]
+
+    The timestamp is UTC, with the trailing ``Z`` saying so, to match the
+    UTC in every NIRC2 header keyword.
 
     and stamps ``DPPVER`` and ``DPPDATE`` once, on first use. Lines longer
     than a HISTORY card's payload are wrapped across several cards rather
@@ -110,20 +170,29 @@ def record_step(target, step, **params):
     """
     header = getattr(target, "header", target)
 
+    if replace:
+        drop_step(header, step)
+
+    # UTC, and marked as such. Everything else in a NIRC2 product is UTC --
+    # DATE-OBS, UT, MJD -- and a naive local timestamp cannot be compared
+    # with any of them, or with the same product reduced on another machine.
+    now = datetime.datetime.now(datetime.timezone.utc)
+
     if "DPPVER" not in header:
         header["DPPVER"] = (pipeline_version(), "NIRC2Pol-DPP version")
-        header["DPPDATE"] = (datetime.datetime.now().isoformat(timespec="seconds"),
-                             "pipeline processing date")
+        header["DPPDATE"] = (now.isoformat(timespec="seconds"),
+                             "pipeline processing date (UTC)")
 
     detail = ", ".join(f"{k}={_format_value(v)}" for k, v in params.items())
-    stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+    stamp = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     text = f"{_STEP_PREFIX}{step}: {detail} [{stamp}]" if detail \
         else f"{_STEP_PREFIX}{step} [{stamp}]"
 
     limit = 68  # HISTORY card payload
     while text:
         header.add_history(text[:limit])
-        text = ("    " + text[limit:]) if len(text) > limit else ""
+        text = ((_CONTINUATION + text[limit:])
+                if len(text) > limit else "")
     return header
 
 
@@ -138,12 +207,27 @@ def steps_of(target):
     Returns
     -------
     list of str
-        The ``DPP``-prefixed HISTORY lines, in the order they were written.
-        Other HISTORY cards, such as those astropy adds itself, are ignored.
+        The ``DPP``-prefixed HISTORY lines, in the order they were written,
+        with any continuation cards rejoined so a long parameter list reads
+        back whole. Other HISTORY cards, such as those astropy adds itself,
+        are ignored.
     """
     header = getattr(target, "header", target)
-    return [str(h) for h in header.get("HISTORY", [])
-            if str(h).startswith(_STEP_PREFIX)]
+    steps, in_step = [], False
+    for card in header.get("HISTORY", []):
+        text = str(card)
+        if text.startswith(_STEP_PREFIX):
+            steps.append(text)
+            in_step = True
+        elif in_step and text.startswith(_CONTINUATION):
+            # A wrapped continuation of the step above. Rejoining is not
+            # cosmetic: record_step splits long parameter lists across
+            # cards, so without this everything past the first card is
+            # invisible to every reader even though it is on disk.
+            steps[-1] += text[len(_CONTINUATION):]
+        else:
+            in_step = False
+    return steps
 
 
 def describe(target):

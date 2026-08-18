@@ -1,9 +1,9 @@
 # Tutorial dataset
 
-The smallest subset of a real night that runs `docs/tutorial.md` end to end,
+The smallest subset of a real night that runs `examples/tutorial.ipynb` end to end,
 bundled so the tutorial works without access to the observatory archive.
 
-**Source:** AB Aurigae, 2025-12-07 UT, Keck/NIRC2 in L' + Wollaston (narrow
+**Source:** AB Aurigae, 2025-12-08 UT, Keck/NIRC2 in L' + Wollaston (narrow
 camera, no coronagraph). The full night is 1265 frames; these are 14 of them,
 gzipped. They are otherwise untouched — real frames with real headers, which
 is half the point of the exercise.
@@ -28,4 +28,8 @@ glob pattern does, which is why the tutorial matches `*.fits*`.
 
 To reduce the whole night instead, point `DATA` at
 `/home/shared/exoserver/NIRC2_Pol/jaykes_reduction/2025-12-07` on the lab
-machine and restore a frame-range filter.
+machine and restore a frame-range filter. That folder is named for the HST
+evening; the frames inside it are all `DATE-OBS = 2025-12-08`, since a Keck
+night runs 04:00-16:00 UTC and so falls entirely in the following UTC date.
+The pipeline works in UTC throughout, and `ObslogPaths.check_frame_dates`
+warns when a dataset folder is named for the local evening instead.

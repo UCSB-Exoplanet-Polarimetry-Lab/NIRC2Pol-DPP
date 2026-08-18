@@ -79,7 +79,7 @@ def mean_angle(angles, period=360.0):
     Notes
     -----
     A plain ``np.mean`` is wrong whenever the set straddles a wrap. The
-    AB Aur 2025-12-07 data has a cycle whose PARANG runs ``-112.75`` and
+    AB Aur 2025-12-08 UT data has a cycle whose PARANG runs ``-112.75`` and
     ``246.94`` — the same direction, 360 deg apart. Unwrapped the second is
     ``-113.06``, so the true mean is ``-112.905``, while the arithmetic mean
     of the raw values is ``+67.095``.

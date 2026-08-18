@@ -98,3 +98,20 @@ def test_incomplete_cycle_raises(instrument):
     cycle = synth_cycle(0.0)[:2]
     with pytest.raises(ValueError, match="No frames at modulator angle"):
         double_difference(instrument, cycle, register_method=None)
+
+
+def test_rebuilding_a_cycle_replaces_its_record_rather_than_stacking(instrument,
+                                                                     truth):
+    """build_stokes_cube writes its provenance to cycle[0], an *input*, so the
+    writers can find it. Scanning fast axis offsets would otherwise leave a
+    pile of records disagreeing about how the cube in hand was made."""
+    from utils.provenance import steps_of
+
+    cycle = synth_cycle(truth["theta_off"], parang=15.0, el=50.0, rot=30.0)
+    for offset in (5.0, 6.0, 7.0):
+        build_stokes_cube(instrument, cycle, fast_axis_offset=offset,
+                          register_method=None, derotate=False)
+
+    records = [s for s in steps_of(cycle[0].header) if "stokes cube" in s]
+    assert len(records) == 1, "one build, one record"
+    assert "fast_axis_offset=7" in records[0], "and it is the build that ran last"

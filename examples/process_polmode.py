@@ -53,7 +53,9 @@ log = logging.getLogger("process_polmode")
 # ---------------------------------------------------------------------------
 # configuration
 OBSERVATIONS_FOLDER = "/path/to/data_polmode"  # contains <date>/raw/*.fits
-DATE = "2025-12-07"
+# UTC, as DATE-OBS records it. A Keck night runs 04:00-16:00 UTC, so one
+# UTC date names a whole night -- one day after the HST evening.
+DATE = "2025-12-08"
 TARGET = "AB_Aur"
 
 # Background, applied per Wollaston beam inside build_stokes_cubes. The band
@@ -65,7 +67,7 @@ BACKGROUND_BOX = (25, 350, 50, 400)   # (ylow, yhigh, xlow, xhigh)
 BACKGROUND_ANNULUS = None             # (r_inner, r_outer) px, for "annulus"
 
 # Where the two Wollaston beams sit on the detector. This is per-epoch and
-# has to be measured, not inherited -- the values below are for 2025-12-07.
+# has to be measured, not inherited -- the values below are for 2025-12-08.
 # Registration finds one centre on the mean of the two beams and shifts both
 # by it, preserving their relative alignment, so a relative offset between
 # them is never corrected: it goes straight into the double difference as a
@@ -74,8 +76,10 @@ BACKGROUND_ANNULUS = None             # (r_inner, r_outer) px, for "annulus"
 # them with instrument.fit_beam_geometry(frame, top_guess, x_guess), starting
 # from a neighbouring epoch; register_beam_stack also re-checks on every call
 # and warns if the two beams disagree.
-BEAM_TOP_ROW = 504    # first detector row of the top beam
-BEAM_X_OFFSET = 12    # column shift of the top beam relative to the bottom
+# None looks the epoch up in instruments/nirc2.ini by DATE-OBS and band, which
+# is the normal path. Set them only to reduce an epoch not yet in that file.
+BEAM_TOP_ROW = None   # first detector row of the top beam
+BEAM_X_OFFSET = None  # column shift of the top beam relative to the bottom
 
 # Centering algorithm used to register the two beams before differencing.
 # The right choice depends on what the source looks like: "smooth_peak" for a
@@ -131,8 +135,9 @@ paths = ObslogPaths(OBSERVATIONS_FOLDER, DATE)
 paths.make_folders()
 rejects = load_rejects(paths.rejects_file)
 log.info("background: %s", instrument.describe_background())
-log.info("beam geometry: top row %d, x offset %d",
-         instrument.top_row_start, instrument.beam_x_offset)
+if instrument.top_row_start is not None:
+    log.info("beam geometry overridden: top row %s, x offset %s",
+             instrument.top_row_start, instrument.beam_x_offset)
 
 # --- 1. sort raw frames by type -------------------------------------------
 # *.fits* rather than *.fits so gzipped archive frames are picked up too
@@ -157,6 +162,9 @@ master_flats, flat_masks = make_master_flats(
     # rank ahead of every other flat; data without them fall back to regular
     modulator_keyword=instrument.modulator_keyword,
     critical_angles=instrument.critical_angles,
+    # which flat a band requires is a property of the instrument
+    required_flat_types=instrument.required_flat_types,
+    default_required_flat_type=instrument.default_required_flat_type,
 )
 if master_flats:
     save_frames(paths.flats_file, master_flats)
@@ -173,6 +181,9 @@ master_masks = make_master_masks(dark_masks, flat_masks)
 
 # --- 3. pre-process science frames ----------------------------------------
 sci_frames = load_frames(sorted_files["sci"], rejects=rejects)
+# DATE above must be the UTC date the frames carry, since the masters and
+# every product inherit it from the folder name
+paths.check_frame_dates(sci_frames)
 nirc2.make_frametable(sci_frames, paths.table_file)
 
 reduced_frames = []
@@ -181,6 +192,8 @@ for frame in sci_frames:
         frame, master_flats, master_darks, master_skies, master_masks,
         bad_pixel_mask=bad_pixel_mask,
         flat_exceptions=instrument.flat_exceptions,
+        required_flat_types=instrument.required_flat_types,
+        default_required_flat_type=instrument.default_required_flat_type,
         gain=instrument.gain(frame),
         saturation_limit=instrument.saturation_limit(frame),
     )

@@ -16,6 +16,11 @@ product::
 Every step is optional and replaceable: for a custom reduction, skip the
 orchestrator entirely and call the module functions directly (see
 examples/process_polmode.py).
+
+The bare instrument above is enough to sort frames. Any step that splits the
+Wollaston beams also needs the beam geometry, which is read per epoch from
+instruments/nirc2.ini and will refuse rather than guess if that epoch is not
+recorded.
 """
 
 from __future__ import annotations
