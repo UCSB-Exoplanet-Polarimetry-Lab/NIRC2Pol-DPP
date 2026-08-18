@@ -1,17 +1,30 @@
 """End-to-end NIRC2-Pol reduction: raw frames to Stokes cubes.
 
+The script form of ``examples/tutorial.ipynb``: the same steps and the same
+choices, run over a whole night laid out by :class:`utils.ObslogPaths`
+instead of the small dataset bundled in ``examples/tutorial_data``. The
+notebook explains each step and why it is done that way; this file is the
+one you edit and run.
+
 Follows the DPP block diagram / SPIE workflow as plain function calls, so
 each step is easy to run and inspect on its own (e.g. in a notebook):
 
     1. sort raw frames by type (headers)
     2. build master darks / flats / skies
     3. pre-process science frames (dark, flat, bad pixels)
-    4. sky / dither subtraction
-    5. HWP cycle matching
-    6. beam splitting + image registration
-    7. fast axis offset (determined on sky; see THETA_OFF below)
-    8. Stokes cubes per cycle, median Stokes cube, PI/AoLP/DoLP,
-       radial Stokes
+    4. HWP cycle matching
+    5. instrumental polarization and fast axis offset (both measured on sky)
+    6. Stokes cubes per cycle -- beam splitting, background subtraction,
+       registration and double differencing all happen inside the builder
+    7. median Stokes cube, PI / AoLP / DoLP and radial Stokes, written with
+       full provenance by ``ProductWriter``
+
+There is deliberately no separate sky-subtraction step. The background is a
+property of the instrument (``BACKGROUND_METHOD`` below) and is applied to
+each Wollaston beam inside the Stokes builder, which calls
+``instrument.subtract_background(instrument.split_beams(frame))``. Removing
+a background from whole frames beforehand would measure it across both
+beams at once, and would leave the instrument's own setting unused.
 
 Edit the configuration block, then run from the repository root:
 
@@ -26,33 +39,73 @@ import sys
 # make the repo importable when running this script directly
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-import numpy as np
-
 from instruments import nirc2
-from polarimetry import (build_stokes_cubes, median_stokes_cube,
-                         polarization_products, radial_stokes)
+from polarimetry import (ProductWriter, build_stokes_cubes,
+                         fit_fast_axis_on_sky, median_stokes_cube)
 from reduction import (make_master_darks, make_master_flats,
-                       make_master_masks, make_master_skies, reduce_frame,
-                       subtract_annulus_background)
-from utils import Frame, ObslogPaths, load_frames, load_rejects, save_frames
+                       make_master_masks, make_master_skies, reduce_frame)
+from utils import ObslogPaths, load_frames, load_rejects, save_frames
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+log = logging.getLogger("process_polmode")
 
 # ---------------------------------------------------------------------------
 # configuration
 OBSERVATIONS_FOLDER = "/path/to/data_polmode"  # contains <date>/raw/*.fits
-DATE = "2025-12-04"
+DATE = "2025-12-07"
 TARGET = "AB_Aur"
-SKY_ANNULUS = (150, 200)     # (r_in, r_out) in px; None to skip
+
+# Background, applied per Wollaston beam inside build_stokes_cubes. The band
+# decides what is sensible and nirc2.check_background_choice warns if this is
+# a poor fit: L'/M want "dither" or "mean_box", JHK want "annulus" or
+# "mean_box". Box coordinates are in beam-cutout pixels, not full frames.
+BACKGROUND_METHOD = "mean_box"        # "mean_box" | "annulus" | "dither" | None
+BACKGROUND_BOX = (25, 350, 50, 400)   # (ylow, yhigh, xlow, xhigh)
+BACKGROUND_ANNULUS = None             # (r_inner, r_outer) px, for "annulus"
+
+# Subtract a master sky from every science frame during reduction. Off by
+# default: combined with a mean-box or annulus background it removes the
+# pedestal twice. Turn it on for dedicated sky frames with
+# BACKGROUND_METHOD = None.
+USE_MASTER_SKIES = False
+
+# Fast axis offset [deg]. There is no trusted automatic source for it: an
+# HWP ladder on an internal source returns theta_off + chi/2, where chi is
+# the incident polarization angle in the instrument frame and is unknown for
+# a dome or lamp source. Measure it on sky and set it here, or set
+# FIT_ON_SKY to measure it from these data.
+THETA_OFF = 0.0
+
+# Fit theta_off and the instrumental polarization jointly from the data.
+# Assumes an azimuthally polarized source (a scattered-light disk); on a
+# point source, an AGN or a star field it returns a confident wrong answer.
+FIT_ON_SKY = False
+FIT_RADII = (25, 150)   # (r_inner, r_outer) px, the butterfly annulus
 # ---------------------------------------------------------------------------
 
-instrument = nirc2.NIRC2PolarimetryData()
+
+class NightPolData(nirc2.NIRC2PolarimetryData):
+    """NIRC2 as configured for this night.
+
+    Same pattern as the notebook's ``LpPolData``: only the background is a
+    per-dataset choice, so it is all this subclass sets. Detector constants,
+    beam geometry and the polarimetric rotation model live on the base class.
+    """
+
+    background_method = BACKGROUND_METHOD
+    background_box = BACKGROUND_BOX
+    background_annulus = BACKGROUND_ANNULUS
+
+
+instrument = NightPolData()
 paths = ObslogPaths(OBSERVATIONS_FOLDER, DATE)
 paths.make_folders()
 rejects = load_rejects(paths.rejects_file)
+log.info("background: %s", instrument.describe_background())
 
 # --- 1. sort raw frames by type -------------------------------------------
-raw_files = sorted(glob.glob(os.path.join(paths.raw_folder, "*.fits")))
+# *.fits* rather than *.fits so gzipped archive frames are picked up too
+raw_files = sorted(glob.glob(os.path.join(paths.raw_folder, "*.fits*")))
 sorted_files = instrument.sort_frames(raw_files)
 
 # --- 2. master darks / flats / skies --------------------------------------
@@ -69,13 +122,21 @@ master_flats, flat_masks = make_master_flats(
     load_frames(sorted_files["flats_lampon"], rejects=rejects),
     master_darks,
     bad_pixel_mask=bad_pixel_mask,
+    # tell it how to spot a polarimetric (critical-angle) flat set so those
+    # rank ahead of every other flat; data without them fall back to regular
+    modulator_keyword=instrument.modulator_keyword,
+    critical_angles=instrument.critical_angles,
 )
 if master_flats:
     save_frames(paths.flats_file, master_flats)
 
-master_skies, _ = make_master_skies(
-    load_frames(sorted_files["flats_sky"], rejects=rejects),
-    master_darks, bad_pixel_mask=bad_pixel_mask)
+master_skies = None
+if USE_MASTER_SKIES:
+    master_skies, _ = make_master_skies(
+        load_frames(sorted_files["flats_sky"], rejects=rejects),
+        master_darks, bad_pixel_mask=bad_pixel_mask)
+    if master_skies:
+        save_frames(paths.skies_file, master_skies)
 
 master_masks = make_master_masks(dark_masks, flat_masks)
 
@@ -96,47 +157,42 @@ for frame in sci_frames:
     reduced.save(os.path.join(paths.reduced_folder, reduced["RED-FN"]))
     reduced_frames.append(reduced)
 
-# --- 4. sky subtraction (annulus; use subtract_dither_pairs for L') -------
-if SKY_ANNULUS is not None:
-    for frame in reduced_frames:
-        frame.data = subtract_annulus_background(frame.data, *SKY_ANNULUS)
-
-# --- 5. HWP cycle matching ------------------------------------------------
+# --- 4. HWP cycle matching ------------------------------------------------
 cycles = instrument.match_modulator_cycles(reduced_frames)
 
-# --- 6. beam splitting + registration happen inside the Stokes builder via
-#        instrument.split_beams; center the frames first so the beams land
-#        on the star (see reduction.register_beam_stack for finer control)
-
-# --- 7. fast axis offset ---------------------------------------------------
-# There is no trusted automatic source for theta_off. Ladder calibrations
-# were removed because the fitted phase is theta_off + chi/2, with chi (the
-# incident polarization angle in the instrument frame) unknown for an
-# internal source. Determine it on sky and set it here.
-THETA_OFF = 0.0   # [deg] -- REPLACE with a value measured on sky
+# --- 5. fast axis offset and instrumental polarization --------------------
 theta_off = THETA_OFF
+ip = None
+if FIT_ON_SKY:
+    r_inner, r_outer = FIT_RADII
+    result = fit_fast_axis_on_sky(instrument, cycles,
+                                  r_inner=r_inner, r_outer=r_outer)
+    theta_off, ip = result.theta_off, result.ip
+    log.info("fast axis on sky: %s", result.describe())
+    if ip is not None:
+        log.info("instrumental polarization: %s", ip.describe())
+    # for an error bar on the IP, fit it per cycle instead and take the
+    # scatter: mean_ip([fit_ip_uphi(instrument, c, theta_off) for c in cycles])
+
 instrument.fast_axis_offset = theta_off
 
-# --- 8. Stokes cubes and derived products ---------------------------------
+# --- 6. Stokes cubes ------------------------------------------------------
+# IP is removed in the instrument frame, before Q/U are rotated to sky, so it
+# is an argument here rather than something subtracted from a finished cube.
 stokes_cubes = build_stokes_cubes(instrument, cycles,
-                                  fast_axis_offset=theta_off)
+                                  fast_axis_offset=theta_off, ip=ip)
 median_cube = median_stokes_cube(stokes_cubes)
 
+# --- 7. products ----------------------------------------------------------
 header = cycles[0][0].header.copy()
-header["THETAOFF"] = theta_off
+header["THETAOFF"] = (theta_off, "fast axis offset [deg]")
 
-Frame(stokes_cubes, header).save(
-    os.path.join(paths.sequences_folder, f"{TARGET}_stokes_cubes.fits"))
-Frame(median_cube, header).save(
-    os.path.join(paths.sequences_folder, f"{TARGET}_median_stokes.fits"))
-
-pi, aolp, dolp = polarization_products(median_cube)
-q_phi, u_phi = radial_stokes(median_cube[1], median_cube[2])
-
-for name, img in [("PI", pi), ("AoLP", aolp), ("DoLP", dolp),
-                  ("Qphi", q_phi), ("Uphi", u_phi)]:
-    Frame(img, header).save(
-        os.path.join(paths.sequences_folder, f"{TARGET}_{name}.fits"))
+# ObslogPaths owns the night layout (raw/, reduced/, sequences/); the writer
+# owns the product set and its provenance, so it is rooted at sequences/.
+writer = ProductWriter(paths.sequences_folder, target=TARGET)
+writer.save_stokes_cycles(stokes_cubes, cycles, header=header)
+writer.save_median_stokes(median_cube, header=header)
+writer.save_derived_products(median_cube, header=header)
 
 print(f"Done: {len(stokes_cubes)} HWP cycles -> Stokes products in "
-      f"{paths.sequences_folder}")
+      f"{writer.output_dir}")
