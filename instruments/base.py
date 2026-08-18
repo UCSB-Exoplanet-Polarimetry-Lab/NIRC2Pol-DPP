@@ -26,7 +26,7 @@ def read_config(path):
     Parameters
     ----------
     path : str, optional
-        Path to the ``.ini``. Currently defaults to NIRC2, but this method may be re-used when creating a new instruments module.
+        Path to the ``.ini``.
 
     Returns
     -------
@@ -88,16 +88,8 @@ class PolarimetryData(ABC):
     #
     # background subtraction
     #
-    # Removed from every extracted beam before differencing. On-sky data
-    # must configure this: at L' the thermal pedestal reaches tens of
-    # thousands of counts and swamps registration, the I-proportional
-    # instrumental-polarization term, and any PI/I ratio. Calibration
-    # sequences (dome flats, fast axis ladders) set
-    # ``background_method = None``, because there the illumination *is*
-    # the signal.
-    # Recommended by band: L'/M use dither pairs or a mean box (the thermal
-    # pedestal is large and structured); JHK use an annulus around the
-    # source or a mean box.
+    # On-sky data must configure this
+    # Recommended by band: L uses dither pairs or a mean box; JHK use an annulus around the source or a mean box.
     background_method = "mean_box"   # "mean_box" | "annulus" | "dither" | None
     background_box = None                 # (ylow, yhigh, xlow, xhigh)
     background_annulus = None             # (r_inner, r_outer) in pixels
@@ -117,14 +109,7 @@ class PolarimetryData(ABC):
         The warn-once flags persist for the life of the process, which is
         right within one reduction and wrong across several: the second
         night reduced in the same session would stay silent about a missing
-        background or an uncalibrated fast axis offset. Call this between
-        reductions so each one is judged on its own.
-
-        Notes
-        -----
-        Walks the MRO and clears every ``_warned_*`` / ``_announced_*`` flag
-        wherever it is defined, so flags added by a subclass are re-armed
-        too without this needing to know their names.
+        background or an uncalibrated fast axis offset.
         """
         for klass in cls.__mro__:
             for name in list(vars(klass)):
@@ -132,7 +117,7 @@ class PolarimetryData(ABC):
                     setattr(klass, name, False)
 
     def subtract_background(self, stack):
-        """Remove the sky/thermal pedestal from each beam of a stack."""
+        """Remove the sky/thermal background from each beam of a stack."""
         from reduction.sky import (subtract_annulus_background,
                                    subtract_mean_background)
 
