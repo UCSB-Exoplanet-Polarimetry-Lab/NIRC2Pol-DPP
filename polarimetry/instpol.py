@@ -24,13 +24,8 @@ applied at the same point in the chain that the Mueller model will occupy.
 **IP must be removed in the instrument frame, before the rotation into
 sky.** ``Q_sky = Q cos(theta_rot) + U sin(theta_rot)``, so subtracting
 ``ipq * I`` from a sky-frame Q is only correct if the IP vector is rotated
-along with it. Every leakage measurement here therefore operates on the
-output of ``double_difference``, never on a finished sky-frame cube.
-
-``subtract_residual_halo`` is the one deliberate exception, and it is not
-really an exception: it removes net polarization *measured in the sky frame*
-from sky-frame planes, which is self-consistent. What it must never be used
-for is applying an instrument-frame leakage after rotation.
+along with it. Everything here therefore operates on the output of
+``double_difference``, never on a finished sky-frame cube.
 """
 
 from __future__ import annotations
@@ -63,10 +58,6 @@ class InstrumentalPolarization:
         ``"edge_annulus"``
             Closed-form net normalized Stokes over an annulus
             (:func:`measure_ip_annulus` and its wrappers).
-        ``"residual_halo"``
-            As ``"edge_annulus"``, but measured and removed in the **sky**
-            frame after combining (:func:`subtract_residual_halo`).
-
         The field is free-form, so an experimental route may use another
         label; nothing validates it.
     scope : str
@@ -144,55 +135,6 @@ def subtract_ip(Q, U, I, ip, I_u=None):
     if ip is None:
         return Q, U
     return Q - ip.ipq * I, U - ip.ipu * (I if I_u is None else I_u)
-
-
-def subtract_residual_halo(Q, U, I, r_inner, r_outer, center=None):
-    """Remove residual net halo polarization from **sky-frame** Q/U.
-
-    The last step of the de Boer et al. (2020) recipe. Rotating the
-    polarization directions into the sky frame mixes Q and U, so halo signal
-    that cancelled in the instrument frame partly reappears afterwards; this
-    measures what is left over a disk-free annulus and removes it.
-
-    **This is not the instrument-frame rule being broken.** The module note
-    above says an I -> Q/U *leakage* must be removed before the rotation,
-    because the leakage vector rotates with Q and U, so subtracting a fixed
-    ``ipq * I`` from a rotated Q is simply wrong arithmetic. That is a
-    statement about the instrument's leakage. This function removes a
-    different quantity: whatever net polarization is *measured in the sky
-    frame*, after rotation, in a region that should have none. It is measured
-    and removed in the same frame, so nothing is left un-rotated.
-
-    Use it after combining, not per cycle -- residual halo is exactly the
-    thing that survives combination.
-
-    Parameters
-    ----------
-    Q, U, I : ndarray
-        Sky-frame Stokes planes, e.g. from a median-combined cube.
-    r_inner, r_outer : float
-        Annulus radii [px]. Must be **disk-free**: this works on Q and U, so
-        any disk signal inside the annulus is removed from the whole image as
-        though it were halo.
-    center : tuple of float, optional
-        ``(cy, cx)`` of the star; defaults to the image centre.
-
-    Returns
-    -------
-    Q_out, U_out : ndarray
-        The corrected planes.
-    ip : InstrumentalPolarization
-        What was removed, ``scope="sequence_joint"``,
-        ``method="residual_halo"`` -- distinct from ``"edge_annulus"`` so a
-        product's provenance shows this ran in the sky frame rather than the
-        instrument frame.
-    """
-    ip = measure_ip_annulus(Q, U, I, r_inner, r_outer, center=center,
-                            method="residual_halo", scope="sequence_joint")
-    Q_out, U_out = subtract_ip(Q, U, I, ip)
-    log.info("Residual halo removed from the combined sky-frame planes: %s",
-             ip.describe())
-    return Q_out, U_out, ip
 
 
 def _annulus(shape, r_inner, r_outer, center=None):

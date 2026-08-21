@@ -29,7 +29,6 @@ from .instpol import (
     measure_ip_annulus,
     measure_ip_coronagraph,
     subtract_ip,
-    subtract_residual_halo,
 )
 from .fast_axis import (
     OFFSET_TO_FRAME,
@@ -75,6 +74,5 @@ __all__ = [
     "scan_fast_axis_offset_butterfly",
     "single_difference",
     "subtract_ip",
-    "subtract_residual_halo",
     "wrap_offset",
 ]

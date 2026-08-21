@@ -50,7 +50,6 @@ import numpy as np
 
 from polarimetry import (ProductWriter, apply_mueller_model,
                          build_stokes_cubes, fit_ip_uphi,
-                         subtract_residual_halo,
                          fit_ip_uphi_all, mean_ip,
                          fit_fast_axis_butterfly, median_stokes_cube)
 from reduction.config import ReductionConfig
@@ -262,23 +261,11 @@ instrument.fast_axis_offset = theta_off
 # --- 6. Stokes cubes ------------------------------------------------------
 # The leakage is removed in the instrument frame, before Q/U are rotated to
 # sky, so it is an argument here rather than subtracted from a finished cube.
-# The cfg.final_halo_annulus step below is a different quantity -- residual net
-# polarization measured in the sky frame, after rotation -- not this one
-# applied late.
+
 stokes_cubes = build_stokes_cubes(instrument, cycles,
                                   fast_axis_offset=theta_off, ip=ip,
                                   **dd_kwargs)
 median_cube = median_stokes_cube(stokes_cubes)
-
-# de Boer's last step: the rotation into sky mixes Q and U, so halo signal
-# that cancelled in the instrument frame partly reappears. Measured and
-# removed in the sky frame, which is self-consistent -- see the note in
-# polarimetry.instpol about why that is not the instrument-frame rule broken.
-if cfg.final_halo_annulus is not None:
-    q_final, u_final, _ = subtract_residual_halo(
-        median_cube[1], median_cube[2], median_cube[0],
-        *cfg.final_halo_annulus)
-    median_cube = np.stack([median_cube[0], q_final, u_final])
 
 # --- 7. products ----------------------------------------------------------
 header = cycles[0][0].header.copy()

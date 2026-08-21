@@ -172,13 +172,6 @@ class ReductionConfig:
         "Radius excluded from the fit_uphi annulus, covering the saturated or "
         "occulted core.",
         "instrumental_polarization", unit="px")
-    final_halo_annulus: list = _f(
-        None,
-        "[r_inner, r_outer] for de Boer's final step: rotating into the sky "
-        "frame mixes Q and U, so halo signal that cancelled in the instrument "
-        "frame partly reappears. Must be DISK-FREE -- this one works on Q/U, "
-        "where a disk does contribute. none skips it.",
-        "instrumental_polarization", unit="px")
 
     def __post_init__(self):
         """Check every enumerated field, and the rules that span fields."""

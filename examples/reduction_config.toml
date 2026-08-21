@@ -97,9 +97,3 @@ ip_method = "mm_model"
 # Radius excluded from the fit_uphi annulus, covering the saturated or
 # occulted core. [px]
 ip_mask_radius = 22.0
-
-# [r_inner, r_outer] for de Boer's final step: rotating into the sky frame
-# mixes Q and U, so halo signal that cancelled in the instrument frame
-# partly reappears. Must be DISK-FREE -- this one works on Q/U, where a
-# disk does contribute. none skips it. [px]
-final_halo_annulus = "none"
