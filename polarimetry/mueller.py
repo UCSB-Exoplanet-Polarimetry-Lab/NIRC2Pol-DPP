@@ -48,6 +48,71 @@ class MuellerMatrixModel(ABC):
         """
 
 
+def apply_mueller_model(instrument, cycles, model=None, **kwargs):
+    """Apply an externally determined Mueller matrix model.
+
+    **NOT IMPLEMENTED.** It exists now so that choosing this route fails
+    loudly at the point of choice rather than silently doing something else.
+
+    Nothing is fitted here. The Mueller matrix for NIRC2-Pol is determined
+    elsewhere -- lab measurement and dedicated calibration, with packages
+    like ``pyMuellerMat`` / ``pyPolCal`` -- and this applies the result. The
+    fast axis offset and the I -> Q/U leakage are both terms of that matrix,
+    so applying it settles both at once, which is why picking this route
+    means not choosing a separate fast-axis or IP method.
+
+    That is the substantive difference from what is available today. The
+    empirical routes -- :func:`fit_fast_axis_butterfly`,
+    :func:`polarimetry.fit_ip_uphi_all`, :func:`polarimetry.fit_ip_uphi` --
+    derive their answer from the science data by assuming the source is
+    azimuthally polarized, so none can be used on a target where that is the
+    hypothesis under test. :func:`polarimetry.measure_ip_coronagraph` escapes
+    the assumption but needs high-contrast data and yields no offset. A
+    Mueller model carries the instrument's own calibration instead, so it
+    makes no assumption about the target at all.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Supplies the instrument state the model is evaluated for.
+    cycles : list of list of Frame
+        Complete HWP cycles.
+    model : MuellerMatrixModel, optional
+        The externally determined model to apply. Once implemented this is
+        the input that matters; there is no default, because a Mueller matrix
+        is a property of a particular instrument in a particular state.
+    **kwargs
+        Reserved.
+
+    Raises
+    ------
+    NotImplementedError
+        Always, until the model plumbing exists.
+
+    See Also
+    --------
+    MuellerMatrixModel : the interface such a model implements.
+    """
+    raise NotImplementedError(
+        "Applying a Mueller matrix model is not implemented yet, so the fast "
+        "axis offset and the instrumental polarization cannot be taken from "
+        "one. This route will carry values determined elsewhere -- by lab "
+        "measurement and dedicated calibration, not fitted from your science "
+        "frames -- and because the offset and the leakage are both terms of "
+        "that matrix, applying it settles both at once.\n\n"
+        "Until then, choose an empirical route explicitly:\n"
+        "  fast axis - fit_fast_axis_butterfly\n"
+        "  IP        - fit_ip_uphi_all, fit_ip_uphi (+ mean_ip), or "
+        "measure_ip_coronagraph\n\n"
+        "Note that every one of those except measure_ip_coronagraph ASSUMES "
+        "THE SOURCE IS AZIMUTHALLY POLARIZED, and will return a confident, "
+        "meaningless number on a target where that is what you are trying to "
+        "establish. measure_ip_coronagraph makes no such assumption but "
+        "requires a masked or saturated core, and yields no fast axis "
+        "offset. See polarimetry.mueller.MuellerMatrixModel for the "
+        "interface a model implements.")
+
+
 #
 # TEMPORARY empirical correction — remove when the real Mueller matrix
 # model (ref. 31 of the SPIE paper) is available.

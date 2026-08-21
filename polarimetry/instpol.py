@@ -24,8 +24,13 @@ applied at the same point in the chain that the Mueller model will occupy.
 **IP must be removed in the instrument frame, before the rotation into
 sky.** ``Q_sky = Q cos(theta_rot) + U sin(theta_rot)``, so subtracting
 ``ipq * I`` from a sky-frame Q is only correct if the IP vector is rotated
-along with it. Everything here therefore operates on the output of
-``double_difference``, never on a finished sky-frame cube.
+along with it. Every leakage measurement here therefore operates on the
+output of ``double_difference``, never on a finished sky-frame cube.
+
+``subtract_residual_halo`` is the one deliberate exception, and it is not
+really an exception: it removes net polarization *measured in the sky frame*
+from sky-frame planes, which is self-consistent. What it must never be used
+for is applying an instrument-frame leakage after rotation.
 """
 
 from __future__ import annotations
@@ -49,13 +54,30 @@ class InstrumentalPolarization:
         appears as ``Q = ipq * I``, ``U = ipu * I``, in the **instrument**
         frame.
     method : str
-        How it was measured: ``"uphi_min"``, ``"edge_annulus"`` or
-        ``"manual"``.
+        How it was measured. Produced by this package:
+
+        ``"uphi_min"``
+            Nelder-Mead minimization of the U_phi scatter
+            (:func:`fit_ip_uphi`, :func:`fit_ip_uphi_all`, and
+            ``mueller.fit_empirical_cycle_correction``).
+        ``"edge_annulus"``
+            Closed-form net normalized Stokes over an annulus
+            (:func:`measure_ip_annulus` and its wrappers).
+        ``"residual_halo"``
+            As ``"edge_annulus"``, but measured and removed in the **sky**
+            frame after combining (:func:`subtract_residual_halo`).
+
+        The field is free-form, so an experimental route may use another
+        label; nothing validates it.
     scope : str
         What it was measured over, and therefore how it is applied:
-        ``"frame"`` (one value per exposure, removed from the single
-        difference), ``"cycle"`` (one per HWP cycle) or ``"sequence"``
-        (one for the whole dataset).
+        ``"cycle"`` (one per HWP cycle), ``"sequence_joint"`` (one value
+        fitted or measured over the whole sequence at once) or
+        ``"sequence_mean"`` (per-cycle values averaged, by
+        :func:`mean_ip`). A per-*exposure* leakage is not represented by this
+        class at all -- ``double_difference(ip_frame_annulus=...)`` computes
+        and removes it inline, via
+        :func:`polarimetry.stokes.normalized_single_difference`.
     diagnostics : dict
         Whatever the measuring routine wants to record — pixel counts,
         before/after residuals, radii used. Carried into the FITS
@@ -124,6 +146,55 @@ def subtract_ip(Q, U, I, ip, I_u=None):
     return Q - ip.ipq * I, U - ip.ipu * (I if I_u is None else I_u)
 
 
+def subtract_residual_halo(Q, U, I, r_inner, r_outer, center=None):
+    """Remove residual net halo polarization from **sky-frame** Q/U.
+
+    The last step of the de Boer et al. (2020) recipe. Rotating the
+    polarization directions into the sky frame mixes Q and U, so halo signal
+    that cancelled in the instrument frame partly reappears afterwards; this
+    measures what is left over a disk-free annulus and removes it.
+
+    **This is not the instrument-frame rule being broken.** The module note
+    above says an I -> Q/U *leakage* must be removed before the rotation,
+    because the leakage vector rotates with Q and U, so subtracting a fixed
+    ``ipq * I`` from a rotated Q is simply wrong arithmetic. That is a
+    statement about the instrument's leakage. This function removes a
+    different quantity: whatever net polarization is *measured in the sky
+    frame*, after rotation, in a region that should have none. It is measured
+    and removed in the same frame, so nothing is left un-rotated.
+
+    Use it after combining, not per cycle -- residual halo is exactly the
+    thing that survives combination.
+
+    Parameters
+    ----------
+    Q, U, I : ndarray
+        Sky-frame Stokes planes, e.g. from a median-combined cube.
+    r_inner, r_outer : float
+        Annulus radii [px]. Must be **disk-free**: this works on Q and U, so
+        any disk signal inside the annulus is removed from the whole image as
+        though it were halo.
+    center : tuple of float, optional
+        ``(cy, cx)`` of the star; defaults to the image centre.
+
+    Returns
+    -------
+    Q_out, U_out : ndarray
+        The corrected planes.
+    ip : InstrumentalPolarization
+        What was removed, ``scope="sequence_joint"``,
+        ``method="residual_halo"`` -- distinct from ``"edge_annulus"`` so a
+        product's provenance shows this ran in the sky frame rather than the
+        instrument frame.
+    """
+    ip = measure_ip_annulus(Q, U, I, r_inner, r_outer, center=center,
+                            method="residual_halo", scope="sequence_joint")
+    Q_out, U_out = subtract_ip(Q, U, I, ip)
+    log.info("Residual halo removed from the combined sky-frame planes: %s",
+             ip.describe())
+    return Q_out, U_out, ip
+
+
 def _annulus(shape, r_inner, r_outer, center=None):
     """Annulus mask, wrapping :func:`utils.imutils.make_annulus_mask`.
 
@@ -180,6 +251,27 @@ def measure_ip_annulus(Q, U, I, r_inner, r_outer, center=None,
     polarized signal there (a bright inner disk, a companion) is absorbed
     into the answer and then subtracted from the whole image, so choose the
     radii to exclude it.
+
+    .. warning::
+
+       ``sum(Q) / sum(I)`` needs enough starlight in the annulus to be
+       stable, and that requirement fights the disk-free one. Measured on AB
+       Aur (2025-12-07 L', saturated core, no coronagraph), the median
+       intensity falls 63x between r = 22-40 px and r = 160-220 px, and the
+       reported ipq tracks the shrinking denominator rather than the
+       instrument::
+
+           22-40 px   -0.9%     150-200 px   -1.9%
+           40-80 px   +0.4%     160-220 px   -3.4%
+           80-150 px  +0.5%     200-224 px   -8.6%
+
+       The disk there runs to ~150 px, so no annulus is both disk-free and
+       bright enough. On that dataset every radius choice made U_phi worse
+       than no correction at all. This is a property of the data, not a fault
+       in the arithmetic -- but it means the method needs genuinely
+       high-contrast data, and needs checking against something before it is
+       trusted. It is currently not offered as an ``IP_METHOD`` for that
+       reason.
     """
     mask = _annulus(I.shape, r_inner, r_outer, center) & np.isfinite(I)
     npix = int(mask.sum())
@@ -233,7 +325,7 @@ def measure_ip_coronagraph(instrument, cycle, r_inner=None, r_outer=None,
         and ``r_outer`` to twice that. Supply them explicitly for
         unocculted but saturated data, where the "mask" is the saturated
         core and the instrument cannot know its size.
-    scope : {"cycle", "sequence"}
+    scope : {"cycle", "sequence_joint", "sequence_mean"}
         Recorded on the result. For a *per-exposure* value see
         ``polarimetry.stokes.normalized_single_difference``, and remove it
         with ``double_difference(ip_frame_annulus=...)``.
@@ -367,10 +459,11 @@ def fit_ip_uphi_all(instrument, cycles, fast_axis_offset, mask_radius=20,
     Returns
     -------
     InstrumentalPolarization
-        ``scope="all_cycles"`` -- distinct from :func:`mean_ip`'s
-        ``"sequence"``, which averages separate fits rather than making one.
-        The pooled U_phi scatter before and after is in ``diagnostics``,
-        along with the number of cycles used.
+        ``scope="sequence_joint"`` -- one value fitted jointly over the whole
+        sequence, as against :func:`mean_ip`'s ``"sequence_mean"``, which
+        averages separate per-cycle fits. Same extent, different provenance,
+        so the names say which. The pooled U_phi scatter before and after is
+        in ``diagnostics``, along with the number of cycles used.
 
     Warnings
     --------
@@ -400,7 +493,7 @@ def fit_ip_uphi_all(instrument, cycles, fast_axis_offset, mask_radius=20,
     ipq, ipu = float(result.x[0]), float(result.x[1])
 
     ip = InstrumentalPolarization(
-        ipq, ipu, method="uphi_min", scope="all_cycles",
+        ipq, ipu, method="uphi_min", scope="sequence_joint",
         diagnostics={"uphi_std_initial": initial,
                      "uphi_std_final": float(result.fun),
                      "n_cycles": len(cycles),
@@ -438,7 +531,7 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
     ----------
     fast_axis_offset : float
         Held fixed. Fitting it here as well is possible but degenerate with
-        the IP terms — see :func:`polarimetry.fast_axis.fit_fast_axis_on_sky`,
+        the IP terms — see :func:`polarimetry.fast_axis.fit_fast_axis_butterfly`,
         which does the joint fit deliberately.
     mask_radius : float
         Pixels within this radius of the centre are excluded, covering the
@@ -528,7 +621,7 @@ def mean_ip(ips, method=None):
     n = max(len(q), 1)
     return InstrumentalPolarization(
         float(q.mean()), float(u.mean()),
-        method=method or ips[0].method, scope="sequence",
+        method=method or ips[0].method, scope="sequence_mean",
         diagnostics={"n": len(ips),
                      "ipq_err": float(q.std() / np.sqrt(n)),
                      "ipu_err": float(u.std() / np.sqrt(n))})

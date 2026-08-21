@@ -13,7 +13,9 @@ each step is easy to run and inspect on its own (e.g. in a notebook):
     2. build master darks / flats / skies
     3. pre-process science frames (dark, flat, bad pixels)
     4. measure the beam geometry, then HWP cycle matching
-    5. instrumental polarization and fast axis offset (both measured on sky)
+    5. fast axis offset (FAST_AXIS_METHOD) and instrumental polarization
+       (IP_METHOD), chosen independently -- the butterfly fit settles the
+       offset only
     6. Stokes cubes per cycle -- beam splitting, background subtraction,
        registration (REGISTER_METHOD) and double differencing all happen
        inside the builder
@@ -44,9 +46,13 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from instruments import nirc2
-from polarimetry import (ProductWriter, build_stokes_cubes, fit_ip_uphi,
+import numpy as np
+
+from polarimetry import (ProductWriter, apply_mueller_model,
+                         build_stokes_cubes, fit_ip_uphi,
+                         subtract_residual_halo,
                          fit_ip_uphi_all, mean_ip,
-                         fit_fast_axis_on_sky, median_stokes_cube)
+                         fit_fast_axis_butterfly, median_stokes_cube)
 from reduction import (fit_beam_geometry, make_master_darks,
                        make_master_flats,
                        make_master_masks, make_master_skies, reduce_frame)
@@ -116,45 +122,66 @@ REGISTER_METHOD = "min"
 # BACKGROUND_METHOD = None.
 USE_MASTER_SKIES = False
 
-# Fast axis offset [deg]. There is no trusted automatic source for it: an
-# HWP ladder on an internal source returns theta_off + chi/2, where chi is
-# the incident polarization angle in the instrument frame and is unknown for
-# a dome or lamp source. Measure it on sky and set it here, or set
-# FIT_ON_SKY to measure it from these data. -13 deg is the value measured on
-# sky for this AB Aur night, consistent across three routes (offset alone,
-# joint with IP, and a scan minimum); it is not a default for other data.
+# The fast axis offset and the instrumental polarization are two halves of
+# one question, so they are chosen the same way: by naming the METHOD. Both
+# default to "mm_model" -- the Mueller matrix model, which settles both at
+# once and is the destination -- and that route is not built yet, so a
+# reduction that has not thought about this stops with a clear error rather
+# than quietly using an idealized rotation and no leakage correction.
+#
+# FAST_AXIS_METHOD
+#   "mm_model"   take the offset from the Mueller matrix model (NOT YET
+#                IMPLEMENTED -- raises). Settles the IP too, so IP_METHOD
+#                must also be "mm_model".
+#   "butterfly"  fit it from these data by the butterfly's orientation
+#   "fixed"      use THETA_OFF below exactly as given, fitting nothing
+#
+# Fast axis offset [deg], used when FAST_AXIS_METHOD = "fixed". There is no
+# trusted automatic source for it: an HWP ladder on an internal source
+# returns theta_off + chi/2, where chi is the incident polarization angle in
+# the instrument frame and is unknown for a dome or lamp source. -13 deg is
+# the value measured on sky for this AB Aur night, consistent across the
+# butterfly fit and a scan minimum; it is not a default for other data.
+FAST_AXIS_METHOD = "mm_model"
 THETA_OFF = -13.0
-
-# Fit theta_off and the instrumental polarization jointly from the data.
-# Assumes an azimuthally polarized source (a scattered-light disk); on a
-# point source, an AGN or a star field it returns a confident wrong answer.
-FIT_ON_SKY = False
 FIT_RADII = (25, 150)   # (r_inner, r_outer) px, the butterfly annulus
 
 # Instrumental polarization: the I -> Q/U leakage that makes an unpolarized
 # source come out with Q = ipq*I, U = ipu*I.
 #
-# Each name says HOW the leakage is measured and over WHAT, because the two
-# choices are independent and more methods are coming. Read them as
-# <method>_<scope>.
+# Read the names as <method>_<scope>: how the leakage is measured, and what
+# it is measured over -- which is also the level it is applied at, so a
+# per_cycle measurement is removed from its own cycle.
 #
-#   None                    leave it uncorrected
-#   "fit_uphi_all"          minimise the U_phi residual, one ipq/ipu fitted
-#                           across every cycle at once
-#   "fit_uphi_per_cycle"    minimise the U_phi residual per cycle, then
-#                           average; the scatter gives an error bar
+#   "mm_model"                  from the Mueller matrix model (NOT YET
+#                               IMPLEMENTED -- raises). Settles the fast axis
+#                               too, so FAST_AXIS_METHOD must also be
+#                               "mm_model"
+#   "fit_uphi_per_cycle"        minimise the U_phi residual per cycle
+#   "fit_uphi_all"              minimise it once across every cycle
+#   None                        leave it uncorrected
 #
-# BOTH fit_uphi_* options ASSUME THE SOURCE IS AZIMUTHALLY POLARIZED. They
-# will rotate a genuine U_phi signal into Q_phi and report a confident
-# number, so never use them where that is the hypothesis under test -- see
-# polarimetry.measure_ip_coronagraph, which assumes nothing about the target
-# but needs high-contrast data.
+# There is no "fit_uphi_per_frame": one exposure gives a single difference,
+# +-Q or +-U, never both, so U_phi cannot be formed from it.
 #
-# On AB Aur the two fit_uphi_* options agree to within 0.005% in ipq and give
-# near-identical U_phi, so pick on what you believe about the instrument:
-# _all if the leakage is a property of the optics, _per_cycle if it varies
-# through the sequence or you want the error bar.
-IP_METHOD = None            # None | "fit_uphi_all" | "fit_uphi_per_cycle"
+# Both fit_uphi_* routes ASSUME THE SOURCE IS AZIMUTHALLY POLARIZED and will
+# return a confident, meaningless number where that is the hypothesis under
+# test. They work on U_phi, where a tangentially polarized disk puts no
+# signal by definition, so IP_MASK_RADIUS need only clear the core and the
+# annulus may span the disk.
+#
+# The mask-edge ("edge_annulus") family is deliberately NOT offered here --
+# see the note by measure_ip_coronagraph. It is untested on data we have.
+#
+# On AB Aur the two fit_uphi_* options agree to within 0.005% in ipq.
+IP_METHOD = "mm_model"      # see the list above
+
+# de Boer et al. (2020) final step: rotating the polarization directions
+# mixes Q and U, so halo signal that cancelled in the instrument frame partly
+# reappears in the sky frame. This removes what is left, measured over a
+# disk-free annulus on the COMBINED planes. None skips it.
+FINAL_HALO_ANNULUS = None   # (r_inner, r_outer)
+
 IP_MASK_RADIUS = 22         # px, covering the saturated or occulted core
 # ---------------------------------------------------------------------------
 
@@ -191,8 +218,9 @@ rejects = load_rejects(paths.rejects_file)
 run_log = start_reduction_log(paths.log_file)
 run_log.settings(date=DATE, target=TARGET, instrument=type(instrument).__name__,
                  background=instrument.describe_background(),
-                 theta_off=THETA_OFF, fit_on_sky=FIT_ON_SKY,
+                 theta_off=THETA_OFF, fast_axis_method=FAST_AXIS_METHOD,
                  ip_method=IP_METHOD,
+                 final_halo_annulus=FINAL_HALO_ANNULUS,
                  use_master_skies=USE_MASTER_SKIES,
                  register_method=REGISTER_METHOD,
                  beam_top_row=BEAM_TOP_ROW, beam_x_offset=BEAM_X_OFFSET)
@@ -281,50 +309,131 @@ log.info("beam geometry: top row %d, x offset %d",
 cycles = instrument.match_modulator_cycles(reduced_frames)
 
 # --- 5. fast axis offset and instrumental polarization --------------------
-theta_off = THETA_OFF
-ip = None
-if FIT_ON_SKY:
-    r_inner, r_outer = FIT_RADII
-    result = fit_fast_axis_on_sky(instrument, cycles,
-                                  r_inner=r_inner, r_outer=r_outer,
-                                  register_method=REGISTER_METHOD)
-    theta_off, ip = result.theta_off, result.ip
-    log.info("fast axis on sky: %s", result.describe())
-    if ip is not None:
-        log.info("instrumental polarization: %s", ip.describe())
+# Both are chosen by naming a method; nothing here has a silent default. The
+# Mueller matrix model settles the two together, so it is all or neither.
+FAST_AXIS_METHODS = ("mm_model", "butterfly", "fixed")
+IP_METHODS = ("mm_model", "fit_uphi_per_cycle", "fit_uphi_all", None)
 
-# The on-sky fit above may already have produced an IP; only fit one here if
-# it did not, so a deliberate IP_METHOD never silently overrides that result.
-if ip is None and IP_METHOD:
-    if IP_METHOD == "fit_uphi_all":
-        ip = fit_ip_uphi_all(instrument, cycles, theta_off,
-                             mask_radius=IP_MASK_RADIUS,
-                             register_method=REGISTER_METHOD)
-    elif IP_METHOD == "fit_uphi_per_cycle":
-        per_cycle = [fit_ip_uphi(instrument, c, theta_off,
-                                 mask_radius=IP_MASK_RADIUS,
-                                 register_method=REGISTER_METHOD)
-                     for c in cycles]
-        ip = mean_ip(per_cycle)
-        log.info("per-cycle IP standard error: ipq %.4f, ipu %.4f",
-                 ip.diagnostics["ipq_err"], ip.diagnostics["ipu_err"])
-    else:
-        raise ValueError(
-            f"IP_METHOD must be None, 'fit_uphi_all' or "
-            f"'fit_uphi_per_cycle', not {IP_METHOD!r}. The name states the "
-            f"method and its scope, so a new measurement route arrives as a "
-            f"new name rather than changing what an old one means.")
+if FAST_AXIS_METHOD not in FAST_AXIS_METHODS:
+    raise ValueError(f"FAST_AXIS_METHOD must be one of {FAST_AXIS_METHODS}, "
+                     f"not {FAST_AXIS_METHOD!r}")
+if IP_METHOD == "fit_uphi_per_frame":
+    raise ValueError(
+        "There is no 'fit_uphi_per_frame'. One exposure yields a single "
+        "difference -- +-Q or +-U, never both -- so U_phi cannot be formed "
+        "from it and there is nothing to minimise. Use "
+        "'fit_uphi_per_cycle' instead.")
+if str(IP_METHOD).startswith("edge_annulus"):
+    raise ValueError(
+        "The edge_annulus routes are withdrawn for now. The estimator is "
+        "sum(Q)/sum(I) over an annulus, which needs enough starlight in that "
+        "annulus to be stable -- and on AB Aur there is no annulus that has "
+        "it while also excluding the disk. Measured on that data, median I "
+        "falls 63x between r = 22-40 px and r = 160-220 px, and the reported "
+        "ipq grows with radius as the denominator shrinks: -0.9%, +0.4%, "
+        "+0.5%, -1.9%, -3.4%, -8.6%. Use fit_uphi_all or "
+        "fit_uphi_per_cycle.")
+if IP_METHOD == "butterfly_joint":
+    raise ValueError(
+        "'butterfly_joint' is gone: the butterfly fit now determines the "
+        "fast axis offset only, and the leakage is chosen separately with "
+        "IP_METHOD. Note that every route currently offered needs the offset "
+        "as an input, so the offset is fitted without a leakage removed and "
+        "is biased; fit_fast_axis_butterfly takes ip= if you have one from "
+        "elsewhere.")
+if IP_METHOD not in IP_METHODS:
+    raise ValueError(f"IP_METHOD must be one of {IP_METHODS}, not "
+                     f"{IP_METHOD!r}. The name states the method and its "
+                     f"scope, so a new route arrives as a new name rather "
+                     f"than changing what an old one means.")
+
+using_mm = (FAST_AXIS_METHOD == "mm_model", IP_METHOD == "mm_model")
+if any(using_mm) and not all(using_mm):
+    raise ValueError(
+        "The Mueller matrix model gives the fast axis offset and the "
+        "instrumental polarization together -- they are both terms of the "
+        "same matrix -- so FAST_AXIS_METHOD and IP_METHOD must either both "
+        f"be 'mm_model' or neither. Got FAST_AXIS_METHOD="
+        f"{FAST_AXIS_METHOD!r}, IP_METHOD={IP_METHOD!r}.")
+
+theta_off, ip = None, None
+dd_kwargs = {"register_method": REGISTER_METHOD}
+
+if all(using_mm):
+    # Not fitted here: this applies a matrix determined elsewhere. Raises
+    # NotImplementedError until that plumbing exists.
+    theta_off, ip = apply_mueller_model(instrument, cycles)
+
+# --- then the fast axis ---------------------------------------------------
+if theta_off is None:
+    if FAST_AXIS_METHOD == "fixed":
+        if THETA_OFF is None:
+            raise ValueError("FAST_AXIS_METHOD='fixed' uses THETA_OFF, which "
+                             "is None. Set it, or pick another method.")
+        theta_off = THETA_OFF
+        log.info("fast axis: fixed at %g deg (nothing fitted)", theta_off)
+
+    elif FAST_AXIS_METHOD == "butterfly":
+        r_inner, r_outer = FIT_RADII
+        result = fit_fast_axis_butterfly(instrument, cycles, ip=None,
+                                         r_inner=r_inner, r_outer=r_outer,
+                                         **dd_kwargs)
+        theta_off = result.theta_off
+        log.info("fast axis from the butterfly: %s", result.describe())
+        if IP_METHOD is not None:
+            log.warning(
+                "Fast axis fitted with no leakage removed: every available "
+                "IP route (%r here) needs the offset as an input, so the "
+                "leakage cannot be measured first. The offset and the "
+                "leakage are degenerate, so this offset is biased by however "
+                "much IP there is. fit_fast_axis_butterfly takes ip= if you "
+                "have a leakage from elsewhere.", IP_METHOD)
+
+# --- and the leakage last, where it needed the offset ---------------------
+if IP_METHOD == "fit_uphi_all":
+    ip = fit_ip_uphi_all(instrument, cycles, theta_off,
+                         mask_radius=IP_MASK_RADIUS, **dd_kwargs)
+elif IP_METHOD == "fit_uphi_per_cycle":
+    ip = [fit_ip_uphi(instrument, c, theta_off, mask_radius=IP_MASK_RADIUS,
+                      **dd_kwargs)
+          for c in cycles]
+    log.info("per-cycle U_phi IP: ipq %s",
+             ", ".join(f"{p.ipq:+.4f}" for p in ip))
+    log.info("per-cycle IP standard error: ipq %.4f, ipu %.4f",
+             mean_ip(ip).diagnostics["ipq_err"],
+             mean_ip(ip).diagnostics["ipu_err"])
+
+if isinstance(ip, list):
+    log.info("instrumental polarization, per cycle (mean %s)",
+             mean_ip(ip).describe())
+elif ip is not None:
     log.info("instrumental polarization: %s", ip.describe())
+elif IP_METHOD is None:
+    log.warning("No instrumental polarization correction (IP_METHOD=None); "
+                "the I -> Q/U leakage stays in the products.")
 
 instrument.fast_axis_offset = theta_off
 
 # --- 6. Stokes cubes ------------------------------------------------------
-# IP is removed in the instrument frame, before Q/U are rotated to sky, so it
-# is an argument here rather than something subtracted from a finished cube.
+# The leakage is removed in the instrument frame, before Q/U are rotated to
+# sky, so it is an argument here rather than subtracted from a finished cube.
+# The FINAL_HALO_ANNULUS step below is a different quantity -- residual net
+# polarization measured in the sky frame, after rotation -- not this one
+# applied late.
 stokes_cubes = build_stokes_cubes(instrument, cycles,
                                   fast_axis_offset=theta_off, ip=ip,
-                                  register_method=REGISTER_METHOD)
+                                  **dd_kwargs)
 median_cube = median_stokes_cube(stokes_cubes)
+
+# de Boer's last step: the rotation into sky mixes Q and U, so halo signal
+# that cancelled in the instrument frame partly reappears. Measured and
+# removed in the sky frame, which is self-consistent -- see the note in
+# polarimetry.instpol about why that is not the instrument-frame rule broken.
+if FINAL_HALO_ANNULUS is not None:
+    q_final, u_final, _ = subtract_residual_halo(
+        median_cube[1], median_cube[2], median_cube[0],
+        *FINAL_HALO_ANNULUS)
+    median_cube = np.stack([median_cube[0], q_final, u_final])
 
 # --- 7. products ----------------------------------------------------------
 header = cycles[0][0].header.copy()

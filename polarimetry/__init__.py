@@ -17,6 +17,7 @@ from .stokes import (
 from .products import ProductWriter
 from .mueller import (
     MuellerMatrixModel,
+    apply_mueller_model,
     build_corrected_stokes_cube,
     fit_empirical_cycle_correction,
 )
@@ -28,6 +29,7 @@ from .instpol import (
     measure_ip_annulus,
     measure_ip_coronagraph,
     subtract_ip,
+    subtract_residual_halo,
 )
 from .fast_axis import (
     OFFSET_TO_FRAME,
@@ -35,9 +37,9 @@ from .fast_axis import (
     PreparedCycle,
     butterfly_phase,
     combine_at_offset,
-    fit_fast_axis_on_sky,
+    fit_fast_axis_butterfly,
     prepare_cycles,
-    scan_fast_axis_offset,
+    scan_fast_axis_offset_butterfly,
     wrap_offset,
 )
 
@@ -50,6 +52,7 @@ __all__ = [
     "PreparedCycle",
     "ProductWriter",
     "azimuthal_angle",
+    "apply_mueller_model",
     "build_corrected_stokes_cube",
     "build_stokes_cube",
     "build_stokes_cubes",
@@ -57,7 +60,7 @@ __all__ = [
     "combine_at_offset",
     "double_difference",
     "fit_empirical_cycle_correction",
-    "fit_fast_axis_on_sky",
+    "fit_fast_axis_butterfly",
     "fit_ip_uphi",
     "fit_ip_uphi_all",
     "mean_ip",
@@ -69,8 +72,9 @@ __all__ = [
     "prepare_cycles",
     "radial_stokes",
     "rotate_qu",
-    "scan_fast_axis_offset",
+    "scan_fast_axis_offset_butterfly",
     "single_difference",
     "subtract_ip",
+    "subtract_residual_halo",
     "wrap_offset",
 ]

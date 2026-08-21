@@ -1,4 +1,9 @@
-"""Determining the HWP fast axis offset from science data, on sky.
+"""Determining the HWP fast axis offset from an azimuthally polarized source.
+
+Every routine here measures the offset from the orientation of the
+**butterfly** -- the four-lobe pattern a tangentially polarized disk makes in
+Q/U -- which is why they carry ``butterfly`` in their names. That is a real
+restriction, not a detail of the implementation: see the warning at the end.
 
 There is no trusted lamp-ladder route to theta_off. Fitting
 ``A*cos(4*(theta - theta_fit))`` to an HWP ladder returns
@@ -26,7 +31,9 @@ it has turned recovers the offset.
 
 **This assumes the source is azimuthally polarized.** On a target where that
 is the hypothesis under test, these routines will happily rotate a genuine
-U_phi signal into Q_phi and report a confident number.
+U_phi signal into Q_phi and report a confident number. There is currently no
+route to theta_off that does not make this assumption -- the lamp-ladder
+route is degenerate, as above, and its log was deleted deliberately.
 """
 
 from __future__ import annotations
@@ -92,7 +99,7 @@ def butterfly_phase(Q, U, center=None, r_inner=0.0, r_outer=None):
     Notes
     -----
     Returns a *frame* rotation, not an offset — the factor of 4 between them
-    is the caller's business, and :func:`fit_fast_axis_on_sky` applies it.
+    is the caller's business, and :func:`fit_fast_axis_butterfly` applies it.
 
     The estimate is flux-weighted through the sums, so it is dominated by
     the brightest part of the disk. It says nothing about whether an
@@ -235,7 +242,7 @@ def _uphi_score(prepared, theta_off, ip, center, r_inner, r_outer,
     r_inner, r_outer : float
         Annulus over which to score.
     score : {"uphi_sum", "uphi_std"}
-        Which statistic to use; see :func:`scan_fast_axis_offset`.
+        Which statistic to use; see :func:`scan_fast_axis_offset_butterfly`.
 
     Returns
     -------
@@ -267,11 +274,16 @@ def _uphi_score(prepared, theta_off, ip, center, r_inner, r_outer,
     return float(abs(np.nansum(u_phi[mask])) / max(abs(denom), 1e-12))
 
 
-def scan_fast_axis_offset(prepared, offsets=None, ip=None, center=None,
+def scan_fast_axis_offset_butterfly(prepared, offsets=None, ip=None, center=None,
                           r_inner=0.0, r_outer=None, score="uphi_sum"):
     """Score a grid of trial offsets. The diagnostic, not the solver.
 
-    :func:`fit_fast_axis_on_sky` returns one number; this returns the whole
+    **Assumes the source is azimuthally polarized**, exactly as
+    :func:`fit_fast_axis_butterfly` does: every available score is a U_phi
+    statistic, and driving U_phi to zero is only meaningful when all the
+    signal belongs in Q_phi.
+
+    :func:`fit_fast_axis_butterfly` returns one number; this returns the whole
     curve behind it, which is the only way to see whether that number sits
     at a real, isolated minimum. Worth doing at least once per dataset: on
     AB Aur the joint offset/IP minimum turned out to sit ~6 deg away from
@@ -316,10 +328,10 @@ def scan_fast_axis_offset(prepared, offsets=None, ip=None, center=None,
 
 @dataclass
 class FastAxisResult:
-    """Outcome of :func:`fit_fast_axis_on_sky`."""
+    """Outcome of :func:`fit_fast_axis_butterfly`."""
 
     theta_off: float
-    ip: object = None                 # InstrumentalPolarization or None
+    ip: object = None                 # the IP removed before fitting, if any
     n_iter: int = 0
     converged: bool = False
     delta_history: tuple = ()
@@ -331,42 +343,60 @@ class FastAxisResult:
         Returns
         -------
         str
-            The offset, the jointly fitted IP if any, and whether it converged.
+            The offset, the IP that was removed before fitting if any, and
+            whether it converged.
         """
         s = f"theta_off={self.theta_off:+.4f} deg (on-sky butterfly"
         if self.ip is not None:
-            s += f", joint IP {self.ip.describe()}"
+            s += f", IP removed first: {self.ip.describe()}"
         return s + f", {self.n_iter} iter, converged={self.converged})"
 
 
-def fit_fast_axis_on_sky(instrument, cycles, fit_ip=True, center=None,
+def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
                          r_inner=20.0, r_outer=None, max_iter=10, tol=1e-3,
                          derotate=True, scan=False, prepared=None,
                          **dd_kwargs):
-    """Measure theta_off from an azimuthally polarized source. The solver.
+    """Measure theta_off from the butterfly's orientation. The solver.
 
-    Alternates two closed-form steps until both stop moving:
+    **Assumes the source is azimuthally polarized** -- a disk in scattered
+    light, whose signal all belongs in Q_phi. The offset is read off how far
+    the butterfly has turned, so on a target where azimuthal polarization is
+    the hypothesis under test this returns a confident, meaningless number.
 
-    1. rotate to sky at the current offset and measure how far the butterfly
-       is still turned (:func:`butterfly_phase`), then correct the offset by
-       ``delta / 4``;
-    2. re-measure the I -> Q/U leakage at that offset, if ``fit_ip``.
+    Iterates one closed-form step until it stops moving: rotate to sky at the
+    current offset, measure how far the butterfly is still turned
+    (:func:`butterfly_phase`), and correct the offset by ``delta / 4``.
 
-    The two steps are done together because they are **degenerate**: a
-    constant leakage tilts the integrated radial Stokes just as a frame
-    rotation does, so an offset fitted with the leakage left in is biased.
-    Fitting only the offset is available (``fit_ip=False``) but is the less
-    honest answer unless the leakage is independently known.
+    **This fits the offset only.** The leakage is a separate choice, made
+    through the IP routines in :mod:`polarimetry.instpol`, and is supplied
+    here through ``ip`` rather than fitted alongside. That matters because
+    the two are **degenerate**: a constant leakage tilts the integrated
+    radial Stokes just as a frame rotation does, so an offset fitted with the
+    leakage still in it is biased by however much IP there is.
+
+    Which means the order the two are done in is not free:
+
+    * the ``edge_annulus`` routes measure the leakage in the instrument frame
+      and need no offset, so they can run **first** and be passed in here,
+      giving an unbiased offset;
+    * the ``fit_uphi`` routes take the offset as an input, so with those the
+      offset has to be fitted first with ``ip=None`` and is biased.
 
     Parameters
     ----------
-    fit_ip : bool
-        Fit ipq/ipu alongside the offset. Leave it on unless you have a
-        leakage measurement you trust more.
+    ip : InstrumentalPolarization, optional
+        A leakage to remove before fitting, not one to fit. Pass the result of
+        an ``edge_annulus`` measurement here -- those need no offset, so they
+        can be made first -- and the offset comes back unbiased. Leaving this
+        None fits the offset with any leakage still present, which biases it.
     r_inner, r_outer : float
-        Annulus [px] holding the disk. ``r_inner`` must clear the occulted
-        or saturated core; the default 20 px suits NIRC2 coronagraphic data
-        and should be checked against the actual mask.
+        Annulus [px] holding the disk -- this fit works on U_phi, where a
+        tangentially polarized disk contributes nothing by definition, so the
+        annulus should *span* the disk rather than avoid it. (The
+        ``edge_annulus`` IP routines work on Q/U instead and need the
+        opposite: radii that exclude the disk.) ``r_inner`` must clear the
+        occulted or saturated core; the default 20 px suits NIRC2
+        coronagraphic data and should be checked against the actual mask.
     prepared : list of PreparedCycle, optional
         Reuse an existing reduction instead of redoing it — handy when
         fitting and scanning the same data.
@@ -386,13 +416,11 @@ def fit_fast_axis_on_sky(instrument, cycles, fit_ip=True, center=None,
     returns a number that means nothing — the pattern it is measuring is not
     there. Check that the integrated Q_phi is significant first.
     """
-    from .instpol import measure_ip_annulus
-
     if prepared is None:
         prepared = prepare_cycles(instrument, cycles, derotate=derotate,
                                   **dd_kwargs)
 
-    theta_off, ip = 0.0, None
+    theta_off = 0.0
     history, converged = [], False
     for it in range(1, max_iter + 1):
         Q, U, _ = combine_at_offset(prepared, theta_off, ip)
@@ -400,18 +428,6 @@ def fit_fast_axis_on_sky(instrument, cycles, fit_ip=True, center=None,
                                 r_outer=r_outer)
         theta_off = wrap_offset(theta_off + delta / OFFSET_TO_FRAME)
         history.append(delta)
-
-        if fit_ip:
-            # leakage is measured in the instrument frame, so combine the
-            # un-rotated planes at the current offset
-            Qi = np.nanmedian([p.Q for p in prepared], axis=0)
-            Ui = np.nanmedian([p.U for p in prepared], axis=0)
-            Ii = np.nanmedian([p.I for p in prepared], axis=0)
-            ip = measure_ip_annulus(Qi, Ui, Ii, r_inner, r_outer
-                                    if r_outer is not None
-                                    else min(Qi.shape) / 2.0 - 1.0,
-                                    center=center, method="uphi_min",
-                                    scope="sequence")
 
         if abs(delta / OFFSET_TO_FRAME) < tol:
             converged = True
@@ -421,7 +437,7 @@ def fit_fast_axis_on_sky(instrument, cycles, fit_ip=True, center=None,
                             converged=converged,
                             delta_history=tuple(history))
     if scan:
-        result.scan = scan_fast_axis_offset(prepared, ip=ip, center=center,
+        result.scan = scan_fast_axis_offset_butterfly(prepared, ip=ip, center=center,
                                             r_inner=r_inner, r_outer=r_outer)
     if not converged:
         log.warning("On-sky fast axis fit did not converge in %d iterations "

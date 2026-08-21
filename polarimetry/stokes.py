@@ -365,6 +365,27 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
     return np.stack([I, q_sky, u_sky], axis=0)
 
 
+def _ip_per_cycle(ip, ncycles):
+    """One leakage per cycle, from either a single value or a sequence.
+
+    ``ip`` may be a single :class:`InstrumentalPolarization` applied to every
+    cycle, a sequence of one per cycle, or None. The per-cycle form is what
+    lets a leakage measured on a cycle be removed from *that* cycle, which is
+    the point of the ``per_cycle`` scopes -- otherwise a per-cycle
+    measurement can only ever be averaged and applied uniformly.
+    """
+    if ip is None or hasattr(ip, "ipq"):
+        return [ip] * ncycles
+
+    ips = list(ip)
+    if len(ips) != ncycles:
+        raise ValueError(
+            f"ip has {len(ips)} entries but there are {ncycles} cycles. Pass "
+            f"one InstrumentalPolarization to apply the same leakage to "
+            f"every cycle, or exactly one per cycle.")
+    return ips
+
+
 def build_stokes_cubes(instrument, cycles, fast_axis_offset=None,
                        **kwargs):
     """Stokes cubes for every HWP cycle: returns a ``(ncycles, 3, ny, nx)``
@@ -379,16 +400,22 @@ def build_stokes_cubes(instrument, cycles, fast_axis_offset=None,
     fast_axis_offset : float, optional
         theta_off in degrees.
     **kwargs
-        Passed to :func:`build_stokes_cube`.
+        Passed to :func:`build_stokes_cube`. ``ip`` is special: it may be a
+        single :class:`InstrumentalPolarization` applied to every cycle, or a
+        sequence of one per cycle, so a leakage measured on a cycle can be
+        removed from that same cycle.
 
     Returns
     -------
     ndarray
         ``(ncycles, 3, ny, nx)``.
     """
+    cycles = list(cycles)
+    ips = _ip_per_cycle(kwargs.pop("ip", None), len(cycles))
     cubes = [build_stokes_cube(instrument, cycle,
-                               fast_axis_offset=fast_axis_offset, **kwargs)
-             for cycle in cycles]
+                               fast_axis_offset=fast_axis_offset, ip=ip,
+                               **kwargs)
+             for cycle, ip in zip(cycles, ips)]
     return np.stack(cubes, axis=0)
 
 
