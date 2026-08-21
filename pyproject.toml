@@ -1,0 +1,65 @@
+# Packaging for NIRC2Pol-DPP.
+#
+#     pip install -e .          # development, from a checkout
+#     pip install git+https://github.com/UCSB-Exoplanet-Polarimetry-Lab/NIRC2Pol-DPP.git
+#
+# The version caps here mirror environment.yml, which is the conda route and
+# carries the reasoning behind each one. Keep the two in step. They are not
+# identical by necessity: conda has astropy-base, which is the same package
+# without the optional I/O backends, while pip only offers astropy.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nirc2pol-dpp"
+description = "Dual-beam polarimetry reduction for Keck/NIRC2-Pol"
+readme = "README.md"
+requires-python = ">=3.11"          # tomllib, which reads every config here
+dynamic = ["version"]
+authors = [
+    {name = "Briley Lewis"},
+    {name = "UCSB Exoplanet Polarimetry Lab"},
+]
+keywords = ["astronomy", "polarimetry", "Keck", "NIRC2", "high-contrast imaging"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+    "numpy>=2.0,<3",
+    "scipy>=1.11,<2",
+    "astropy>=7.0,<8",
+    "scikit-image>=0.22,<0.27",
+    # Image rotation goes through pyklip.klip.rotate deliberately, since it
+    # is the validated implementation.
+    "pyklip>=2.9",
+]
+
+[project.optional-dependencies]
+# Needed by examples/tutorial.ipynb, not by the pipeline modules.
+examples = ["matplotlib>=3.8,<4", "ipykernel"]
+
+[project.scripts]
+nirc2pol-reduce = "nirc2pol.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/UCSB-Exoplanet-Polarimetry-Lab/NIRC2Pol-DPP"
+Issues = "https://github.com/UCSB-Exoplanet-Polarimetry-Lab/NIRC2Pol-DPP/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "nirc2pol.__version__"}
+
+# Named explicitly: automatic discovery would also sweep in examples/ and
+# docs/, which are not part of the distribution.
+[tool.setuptools.packages.find]
+include = ["nirc2pol*"]
+
+# The instrument constants and the detector bad-pixel mask are loaded by
+# nirc2pol/instruments/nirc2.py relative to its own __file__, so they have to
+# travel with the package or an installed copy cannot start.
+[tool.setuptools.package-data]
+"nirc2pol.instruments" = ["*.toml", "masks/*.fits"]

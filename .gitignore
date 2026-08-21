@@ -1,6 +1,11 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# packaging artefacts from `pip install -e .` and friends
+build/
+dist/
+*.egg-info/
 .ipynb_checkpoints/
 .DS_Store
 

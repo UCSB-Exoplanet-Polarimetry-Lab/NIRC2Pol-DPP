@@ -28,30 +28,47 @@ def pipeline_version():
     Returns
     -------
     str
-        The short git commit of this repository, suffixed ``+local`` when
-        the working tree is dirty, or ``"unknown"`` when git is unavailable
-        (an installed copy, or no repository). Cached after the first call.
+        The short git commit, suffixed ``+local`` when the working tree is
+        dirty; failing that the installed distribution version; failing
+        that ``"unknown"``. Cached after the first call.
 
     Notes
     -----
     Stamped into every product as ``DPPVER``, so a reduction can be traced
     to the code that made it. ``+local`` is a warning that the commit alone
     does not identify what ran.
+
+    The two sources answer different situations and are tried in that order
+    deliberately. A checkout -- a development install, or the repository
+    itself -- has a commit, which is the more precise answer. A copy
+    installed from a wheel has no ``.git`` anywhere above it, and would
+    otherwise stamp every product it makes ``unknown``; its distribution
+    version is coarser but true.
     """
     global _VERSION_CACHE
     if _VERSION_CACHE is not None:
         return _VERSION_CACHE
 
-    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # git searches upward from here, so any directory inside the checkout
+    # will do.
+    here = os.path.dirname(os.path.abspath(__file__))
     try:
         commit = subprocess.run(
-            ["git", "-C", repo, "rev-parse", "--short", "HEAD"],
+            ["git", "-C", here, "rev-parse", "--short", "HEAD"],
             capture_output=True, text=True, timeout=5).stdout.strip()
         dirty = subprocess.run(
-            ["git", "-C", repo, "status", "--porcelain"],
+            ["git", "-C", here, "status", "--porcelain"],
             capture_output=True, text=True, timeout=5).stdout.strip()
-        _VERSION_CACHE = (commit + ("+local" if dirty else "")) if commit \
-            else "unknown"
+    except Exception:
+        commit = ""
+
+    if commit:
+        _VERSION_CACHE = commit + ("+local" if dirty else "")
+        return _VERSION_CACHE
+
+    try:
+        from importlib.metadata import version
+        _VERSION_CACHE = version("nirc2pol-dpp")
     except Exception:
         _VERSION_CACHE = "unknown"
     return _VERSION_CACHE

@@ -8,6 +8,10 @@
 # against, so a fresh solve reproduces a known-good environment instead of
 # silently jumping a major version; the comment beside each records the
 # version it was exercised on. Relax the caps deliberately, not by default.
+#
+# pyproject.toml carries the same caps for the pip route. Keep the two in
+# step; they differ only where conda offers something pip does not, which
+# is astropy-base below.
 
 name: nirc2p
 
@@ -37,3 +41,8 @@ dependencies:
   # the validated implementation -- but pyklip is not packaged on conda-forge.
   - pip:
       - pyklip >=2.9              # tested on 2.9
+
+      # ...and the pipeline itself, so `import nirc2pol` works from any
+      # directory once the environment is active. Editable, so edits in a
+      # checkout take effect without reinstalling.
+      - -e .
