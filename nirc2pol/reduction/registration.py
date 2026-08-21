@@ -43,8 +43,8 @@ import logging
 
 import numpy as np
 
-from utils.frame import Frame, framelist_to_cube
-from utils.imutils import (argquantile, crop, make_circle_mask,
+from nirc2pol.utils.frame import Frame, framelist_to_cube
+from nirc2pol.utils.imutils import (argquantile, crop, make_circle_mask,
                            rotate_image_center, translate)
 
 log = logging.getLogger(__name__)

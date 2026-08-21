@@ -1,7 +1,7 @@
 """Generic image utilities: cropping, shifting, rotating, masks.
 
 Translated from AIR.jl's utils.jl and angles.jl (the rotation helper only —
-the NIRC2/Keck north-angle calculation lives in instruments/nirc2.py).
+the NIRC2/Keck north-angle calculation lives in nirc2pol/instruments/nirc2.py).
 
 Conventions: arrays are indexed ``data[y, x]`` and coordinates are given as
 ``(cy, cx)`` pairs, 0-based.
@@ -117,7 +117,7 @@ def rotate_image_center(img, angle_degrees, fill=np.nan, center=None,
     Parameters
     ----------
     img : array_like or Frame
-        2D image. A :class:`utils.frame.Frame` is rotated and returned as a
+        2D image. A :class:`nirc2pol.utils.frame.Frame` is rotated and returned as a
         Frame with its header carried across.
     angle_degrees : float
         Rotation angle. **Positive rotates features clockwise** when

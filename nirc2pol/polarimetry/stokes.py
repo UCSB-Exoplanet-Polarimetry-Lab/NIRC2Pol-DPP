@@ -2,7 +2,7 @@
 
 Implements Section 3.5 of Lewis et al. (SPIE), assuming an idealized system
 (the rotation-approximation instrument model); the full Mueller matrix model
-will slot in via ``polarimetry/mueller.py`` once available.
+will slot in via ``nirc2pol/polarimetry/mueller.py`` once available.
 
 For each HWP cycle of critical angles (0, 45, 22.5, 67.5 deg), with
 ``I_top(theta)`` and ``I_bottom(theta)`` the two orthogonal polarization
@@ -28,8 +28,8 @@ import logging
 
 import numpy as np
 
-from utils.angles import mean_angle
-from reduction.registration import register_beam_stack
+from nirc2pol.utils.angles import mean_angle
+from nirc2pol.reduction.registration import register_beam_stack
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ def _angles_match(a, b, atol):
     bool
         True if they match modulo 180 deg.
     """
-    from utils.angles import angles_match
+    from nirc2pol.utils.angles import angles_match
 
     return angles_match(a, b, atol)
 
@@ -325,14 +325,14 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
 
     north = None
     if derotate:
-        from utils.imutils import rotate_image_center
+        from nirc2pol.utils.imutils import rotate_image_center
 
         north = float(mean_angle([instrument.north_angle(f) for f in cycle]))
         I = rotate_image_center(I, -north)
         q_sky = rotate_image_center(q_sky, -north)
         u_sky = rotate_image_center(u_sky, -north)
 
-    from utils.provenance import record_step
+    from nirc2pol.utils.provenance import record_step
 
     # replace=True because this frame is an *input*: the record is written
     # here so the writers, which build product headers from cycle[0], can

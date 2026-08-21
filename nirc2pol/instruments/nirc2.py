@@ -3,7 +3,7 @@ frame classification from headers, and the north angle calculation.
 
 Partially translated from AIR.jl's NIRC2.jl, constants.jl, angles.jl, and
 generic_reduce/01_sort_frames.jl. The generic reduction code in
-``reduction/`` takes these values as parameters, so supporting another
+``nirc2pol/reduction/`` takes these values as parameters, so supporting another
 instrument means writing a module like this one.
 """
 
@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import logging
 import os
-from instruments.base import read_config
-from utils.angles import (par_angle, sexagesimal_to_degrees,
+from nirc2pol.instruments.base import read_config
+from nirc2pol.utils.angles import (par_angle, sexagesimal_to_degrees,
                           small_angle_distance)
-from utils.frame import Frame, parse_date_obs
+from nirc2pol.utils.frame import Frame, parse_date_obs
 
 import numpy as np
 
@@ -134,7 +134,7 @@ def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
 
     Notes
     -----
-    Reading is :meth:`utils.Frame.load`, which already handles gzip and the
+    Reading is :meth:`nirc2pol.utils.Frame.load`, which already handles gzip and the
     primary HDU; the only NIRC2-specific part is which file, so there is no
     second loader to keep in step with the first.
     """
@@ -240,7 +240,7 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
         Filename lists under ``"sci"``, ``"flats_dome"``, ``"flats_sky"``
         and ``"darks"``.
     """
-    from utils.frame import Frame
+    from nirc2pol.utils.frame import Frame
 
     frames, kept_filenames = [], []
     for fn in filenames:
@@ -436,7 +436,7 @@ class NIRC2PolarimetryData(PolarimetryData):
     rotator_keyword = _CONFIG["polarimetry"]["rotator_keyword"]
 
     # Beam extraction geometry (detector rows/columns). Measured from the
-    # data by :func:`reduction.fit_beam_geometry` and assigned before
+    # data by :func:`nirc2pol.reduction.fit_beam_geometry` and assigned before
     # anything splits the beams.
     _announced_beam_geometry = False
 
@@ -512,7 +512,7 @@ class NIRC2PolarimetryData(PolarimetryData):
         Returns
         -------
         ndarray of bool
-            True on known-bad pixels, loaded from ``instruments/masks/``. Dated
+            True on known-bad pixels, loaded from ``nirc2pol/instruments/masks/``. Dated
             2023, so it predates the current detector: defects that have grown
             since are only partly covered.
         """
@@ -601,7 +601,7 @@ class NIRC2PolarimetryData(PolarimetryData):
         Notes
         -----
         The geometry has to be set before this is called. It is measured
-        from the data by :func:`reduction.fit_beam_geometry`, which is a
+        from the data by :func:`nirc2pol.reduction.fit_beam_geometry`, which is a
         standard step of the reduction
         """
         top_row_start = (self.top_row_start if top_row_start is None
@@ -678,7 +678,7 @@ class NIRC2PolarimetryData(PolarimetryData):
                     theta_rot = -2*PARANG + 2*EL + 2*ROTPDEST + 4*theta_off
 
                 assuming an idealized system; the full Mueller matrix model will
-                replace this once calibrated (see polarimetry/mueller.py).
+                replace this once calibrated (see nirc2pol/polarimetry/mueller.py).
 
         Parameters
         ----------

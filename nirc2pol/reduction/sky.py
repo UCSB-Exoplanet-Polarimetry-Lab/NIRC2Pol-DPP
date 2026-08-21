@@ -21,7 +21,7 @@ import logging
 
 import numpy as np
 
-from utils.imutils import argquantile, make_annulus_mask
+from nirc2pol.utils.imutils import argquantile, make_annulus_mask
 from .calibrate import find_closest_sky
 
 log = logging.getLogger(__name__)

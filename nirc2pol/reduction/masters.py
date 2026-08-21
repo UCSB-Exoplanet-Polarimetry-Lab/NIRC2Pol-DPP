@@ -4,11 +4,11 @@ Translated from AIR.jl's reduction.jl (make_masters) and
 generic_reduce/02_make_masters.jl, but instrument-agnostic: the detector
 bad-pixel mask and the header keywords used to group frames are all
 parameters. Anything NIRC2-specific (which keywords to use, where the bad
-pixel mask lives) is supplied by the caller — see instruments/nirc2.py.
+pixel mask lives) is supplied by the caller — see nirc2pol/instruments/nirc2.py.
 
 Typical use::
 
-    from instruments import nirc2
+    from nirc2pol.instruments import nirc2
     bpm = nirc2.load_bad_pixel_mask()
 
     master_darks, dark_masks = make_master_darks(dark_frames, bad_pixel_mask=bpm)
@@ -25,10 +25,10 @@ import logging
 import numpy as np
 from scipy import ndimage
 
-from utils.frame import Frame, framelist_to_cube, match_keys
-from utils.imutils import crop
+from nirc2pol.utils.frame import Frame, framelist_to_cube, match_keys
+from nirc2pol.utils.imutils import crop
 from .calibrate import find_closest_dark
-from utils.provenance import record_step
+from nirc2pol.utils.provenance import record_step
 
 from . import defaults
 
@@ -130,7 +130,7 @@ def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
         master = Frame(method(stack, axis=0), group[0].header.copy())
 
         # per-frame sigma clip masks, OR-ed together
-        from utils.imutils import make_sigma_clip_mask
+        from nirc2pol.utils.imutils import make_sigma_clip_mask
 
         mask = np.zeros(master.shape, dtype=bool)
         for f in group:
@@ -290,7 +290,7 @@ def split_polarimetric_flats(flat_frames, modulator_keyword, critical_angles,
     set aside -- the earliest are kept, so whole cycles survive in the order
     observed -- leaving the largest balanced set.
     """
-    from utils.angles import angles_match, is_critical_angle
+    from nirc2pol.utils.angles import angles_match, is_critical_angle
 
     def band_of(flat):
         """The flat's band, as flat_sort_key reads it."""
@@ -544,7 +544,7 @@ def required_flat_type_for(band, override=None, flat_types=None,
 
         This is a requirement rather than a preference -- reducing L' data with
         a dome flat gives a wrong answer that still looks reasonable -- and is
-        enforced by :func:`reduction.calibrate.find_closest_flat`.
+        enforced by :func:`nirc2pol.reduction.calibrate.find_closest_flat`.
 
     Parameters
     ----------
@@ -659,7 +659,7 @@ def make_master_flats(dome_frames, sky_frames,
 
         Ordering is only a preference among *valid* flats; the type requirement
         itself is enforced later, per science frame, by
-        :func:`reduction.calibrate.find_closest_flat`.
+        :func:`nirc2pol.reduction.calibrate.find_closest_flat`.
 
         Returns ``(master_flats, masks)`` as flat lists.
 
@@ -792,7 +792,7 @@ def make_master_masks(*mask_lists):
     """Combine all master masks, OR-ing together those with the same shape.
 
         Returns a dict mapping shape -> combined boolean mask, which is what
-        :func:`reduction.calibrate.reduce_frame` expects for its ``masks``
+        :func:`nirc2pol.reduction.calibrate.reduce_frame` expects for its ``masks``
         argument.
 
     Parameters
@@ -804,7 +804,7 @@ def make_master_masks(*mask_lists):
     -------
     dict
         Maps array shape to the OR of every mask of that shape, which is what
-        :func:`reduction.calibrate.reduce_frame` expects for ``masks``.
+        :func:`nirc2pol.reduction.calibrate.reduce_frame` expects for ``masks``.
     """
     by_shape = {}
     for masks in mask_lists:

@@ -4,7 +4,7 @@
 instrument: everything the reduction and polarimetry layers need to know
 about detector properties, header conventions, beam geometry, and the
 polarization modulator lives behind this interface. Supporting a new
-instrument means subclassing it (see ``instruments/nirc2.py``).
+instrument means subclassing it (see ``nirc2pol/instruments/nirc2.py``).
 
 The generic layers never read instrument headers directly — they call these
 methods.
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 
-from reduction.sky import subtract_background
+from nirc2pol.reduction.sky import subtract_background
 from abc import ABC, abstractmethod
 
 log = logging.getLogger(__name__)
@@ -141,7 +141,7 @@ class PolarimetryData(ABC):
         Notes
         -----
         The subtractions, and the dispatch between them, are in
-        :func:`reduction.sky.subtract_background`; this supplies the three
+        :func:`nirc2pol.reduction.sky.subtract_background`; this supplies the three
         per-dataset settings the instrument carries and nothing else.
 
         The one piece of logic kept here is the warning for a ``mean_box``
@@ -327,14 +327,14 @@ class PolarimetryData(ABC):
         another object starting at 22.5 and 67.5 presents four distinct angles
         in a row and would be accepted as one cycle -- a double difference
         between two objects. Selecting the frames you mean to reduce
-        (:func:`utils.frame.select_frames`) is the real answer; this is the
+        (:func:`nirc2pol.utils.frame.select_frames`) is the real answer; this is the
         guard for when that has not been done.
 
         Returns a list of cycles; each cycle is a list of frames ordered as
         observed. The frame -> cycle mapping is recorded in each frame's
         POLCYCLE header keyword.
         """
-        from utils.angles import angles_match
+        from nirc2pol.utils.angles import angles_match
 
         cycles = []
         current = []

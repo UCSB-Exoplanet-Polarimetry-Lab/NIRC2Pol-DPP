@@ -145,8 +145,8 @@ def _uphi_fit_terms(instrument, cycle, fast_axis_offset, mask_radius,
     Returns ``(Q0, U0, Iq, Iu, eff_rot, annulus)``. Shared by the per-cycle
     and all-cycle fits so the two cannot drift apart in what they optimize.
     """
-    from utils.angles import mean_angle
-    from utils.imutils import make_circle_mask
+    from nirc2pol.utils.angles import mean_angle
+    from nirc2pol.utils.imutils import make_circle_mask
 
     from .mueller import _registered_stacks
     from .stokes import CRITICAL_ANGLES, single_difference
@@ -304,7 +304,7 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
     ----------
     fast_axis_offset : float
         Held fixed. Fitting it here as well is possible but degenerate with
-        the IP terms — see :func:`polarimetry.fast_axis.fit_fast_axis_butterfly`,
+        the IP terms — see :func:`nirc2pol.polarimetry.fast_axis.fit_fast_axis_butterfly`,
         which does the joint fit deliberately.
     mask_radius : float
         Pixels within this radius of the centre are excluded, covering the

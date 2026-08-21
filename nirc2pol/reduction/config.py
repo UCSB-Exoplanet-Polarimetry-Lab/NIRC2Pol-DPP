@@ -11,7 +11,7 @@ The per-night file you edit is TOML, and it is *generated* from this class by
 automatically and the two cannot drift apart.
 
 Instrument constants are a different thing and live in
-``instruments/nirc2.toml``: those are properties of the instrument, the same
+``nirc2pol/instruments/nirc2.toml``: those are properties of the instrument, the same
 for everyone reducing that night. This file is the choices *you* make.
 """
 
@@ -237,7 +237,7 @@ class ReductionConfig:
         These five attributes are the only ones a *reduction* chooses;
         everything else on the instrument -- plate scale, detector epochs,
         the rotation model -- is a property of the hardware and comes from
-        ``instruments/nirc2.toml``.
+        ``nirc2pol/instruments/nirc2.toml``.
 
         You do not need a subclass to set them. They are read through
         ``self``, so assigning them on the instance works, which is what this
@@ -247,7 +247,7 @@ class ReductionConfig:
 
         The beam geometry is assigned even when None, which is the usual
         case: None means "measure it from the data", and
-        :func:`reduction.fit_beam_geometry` fills it in afterwards. Call this
+        :func:`nirc2pol.reduction.fit_beam_geometry` fills it in afterwards. Call this
         before measuring, not after, or it will overwrite what was measured.
         """
         instrument.background_method = self.background_method
@@ -307,7 +307,7 @@ class ReductionConfig:
             "#",
             "# Instrument constants (plate scale, detector epochs, beam",
             "# geometry seed) are NOT here -- they live in",
-            "# instruments/nirc2.toml, because they are properties of the",
+            "# nirc2pol/instruments/nirc2.toml, because they are properties of the",
             "# instrument rather than choices about this reduction.",
             "",
         ]

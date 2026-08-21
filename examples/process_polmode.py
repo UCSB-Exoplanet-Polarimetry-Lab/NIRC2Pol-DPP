@@ -1,7 +1,7 @@
 """End-to-end NIRC2-Pol reduction: raw frames to Stokes cubes.
 
 The script form of ``examples/tutorial.ipynb``: the same steps and the same
-choices, run over a whole night laid out by :class:`utils.ObslogPaths`
+choices, run over a whole night laid out by :class:`nirc2pol.utils.ObslogPaths`
 instead of the small dataset bundled in ``examples/tutorial_data``. The
 notebook explains each step and why it is done that way; this file is the
 one you edit and run.
@@ -45,18 +45,18 @@ import sys
 # make the repo importable when running this script directly
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
-from instruments import nirc2
+from nirc2pol.instruments import nirc2
 import numpy as np
 
-from polarimetry import (ProductWriter, apply_mueller_model,
+from nirc2pol.polarimetry import (ProductWriter, apply_mueller_model,
                          build_stokes_cubes, fit_ip_uphi,
                          fit_ip_uphi_all, mean_ip,
                          fit_fast_axis_butterfly, median_stokes_cube)
-from reduction.config import ReductionConfig
-from reduction import (fit_beam_geometry, make_master_darks,
+from nirc2pol.reduction.config import ReductionConfig
+from nirc2pol.reduction import (fit_beam_geometry, make_master_darks,
                        make_master_flats,
                        make_master_masks, make_master_skies, reduce_frame)
-from utils import (ObslogPaths, in_frame_range, load_frames, load_rejects,
+from nirc2pol.utils import (ObslogPaths, in_frame_range, load_frames, load_rejects,
                    save_frames, select_frames, start_reduction_log)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -74,7 +74,7 @@ log = logging.getLogger("process_polmode")
 #     python examples/process_polmode.py my_night.toml
 #
 # Instrument constants -- plate scale, detector epochs, the beam geometry
-# search seed -- are a different thing and live in instruments/nirc2.toml.
+# search seed -- are a different thing and live in nirc2pol/instruments/nirc2.toml.
 CONFIG_PATH = (sys.argv[1] if len(sys.argv) > 1
                else os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                  "reduction_config.toml"))

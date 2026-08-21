@@ -20,7 +20,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 
-from utils.frame import parse_date_obs
+from nirc2pol.utils.frame import parse_date_obs
 
 
 log = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class ObslogPaths:
         The per-night subfolders.
     darks_file, flats_file, skies_file, master_mask_file : str
         Multi-extension master files, as written by
-        :func:`utils.frame.save_frames`.
+        :func:`nirc2pol.utils.frame.save_frames`.
     rejects_file : str
         TOML list of frames to exclude; see :func:`load_rejects`.
     """
@@ -165,7 +165,7 @@ def load_rejects(rejects_file):
     Returns a dict either way (empty reasons for the list form), and ``{}``
     when the file does not exist. Callers testing membership are unaffected,
     since ``in`` on a dict checks its keys -- which is how
-    :func:`utils.frame.load_frames` uses it.
+    :func:`nirc2pol.utils.frame.load_frames` uses it.
     """
     import tomllib
 

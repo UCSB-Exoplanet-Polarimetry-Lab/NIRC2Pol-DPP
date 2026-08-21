@@ -28,8 +28,8 @@ import os
 
 import numpy as np
 
-from utils import Frame
-from utils.provenance import record_step
+from nirc2pol.utils import Frame
+from nirc2pol.utils.provenance import record_step
 
 log = logging.getLogger(__name__)
 

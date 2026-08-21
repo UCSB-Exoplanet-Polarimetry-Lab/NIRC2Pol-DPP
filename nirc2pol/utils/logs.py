@@ -97,7 +97,7 @@ class ReductionLog:
         return self._counter.errors
 
     def _write_header(self):
-        from utils.provenance import pipeline_version
+        from nirc2pol.utils.provenance import pipeline_version
 
         self._handler.stream.write(
             f"# NIRC2Pol-DPP {pipeline_version()}\n"

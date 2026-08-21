@@ -196,7 +196,7 @@ def prepare_cycles(instrument, cycles, derotate=True, **dd_kwargs):
     list of PreparedCycle
         One per cycle, with theta_off still free.
     """
-    from utils.angles import mean_angle
+    from nirc2pol.utils.angles import mean_angle
 
     from .stokes import double_difference
 
@@ -368,15 +368,15 @@ def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
     (:func:`butterfly_phase`), and correct the offset by ``delta / 4``.
 
     **This fits the offset only.** The leakage is a separate choice, made
-    through the IP routines in :mod:`polarimetry.instpol`, and is supplied
+    through the IP routines in :mod:`nirc2pol.polarimetry.instpol`, and is supplied
     here through ``ip`` rather than fitted alongside. That matters because
     the two are **degenerate**: a constant leakage tilts the integrated
     radial Stokes just as a frame rotation does, so an offset fitted with the
     leakage still in it is biased by however much IP there is.
 
     Which means the order the two are done in is not free. Every IP route
-    currently offered as an ``ip_method`` -- :func:`polarimetry.fit_ip_uphi`
-    and :func:`polarimetry.fit_ip_uphi_all` -- takes the offset as an *input*,
+    currently offered as an ``ip_method`` -- :func:`nirc2pol.polarimetry.fit_ip_uphi`
+    and :func:`nirc2pol.polarimetry.fit_ip_uphi_all` -- takes the offset as an *input*,
     so the offset has to be fitted first with ``ip=None``, and is biased.
 
     A leakage established some other way -- one that did not itself need an

@@ -16,8 +16,8 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from utils.angles import mean_angle
-from reduction.registration import register_beam_stack
+from nirc2pol.utils.angles import mean_angle
+from nirc2pol.reduction.registration import register_beam_stack
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def apply_mueller_model(instrument, cycles, model=None, **kwargs):
 
     That is the substantive difference from what is available today. Every
     empirical route -- :func:`fit_fast_axis_butterfly`,
-    :func:`polarimetry.fit_ip_uphi_all`, :func:`polarimetry.fit_ip_uphi` --
+    :func:`nirc2pol.polarimetry.fit_ip_uphi_all`, :func:`nirc2pol.polarimetry.fit_ip_uphi` --
     derives its answer from the science data by assuming the source is
     azimuthally polarized, so **none** can be used on a target where that is
     the hypothesis under test, and there is no assumption-free alternative in
@@ -149,7 +149,7 @@ def _registered_stacks(instrument, cycle, critical_angles, atol,
     list of ndarray
         One mean ``(2, ny, nx)`` beam stack per critical angle.
     """
-    from utils.imutils import crop
+    from nirc2pol.utils.imutils import crop
 
     from .stokes import _angles_match
 
@@ -193,7 +193,7 @@ def _corrected_qu(stacks, oe_shifts, frame_shifts, ipq, ipu):
     tuple of ndarray
         ``(Q, U, I)`` in the instrument frame.
     """
-    from utils.imutils import translate
+    from nirc2pol.utils.imutils import translate
 
     diffs, sums = [], []
     for i, stack in enumerate(stacks):
@@ -265,7 +265,7 @@ def fit_empirical_cycle_correction(instrument, cycle, fast_axis_offset,
     """
     from scipy.optimize import minimize
 
-    from utils.imutils import make_circle_mask
+    from nirc2pol.utils.imutils import make_circle_mask
 
     from .stokes import CRITICAL_ANGLES, radial_stokes, rotate_qu
 
@@ -348,7 +348,7 @@ def build_corrected_stokes_cube(instrument, cycle, correction,
     ndarray
         ``(3, ny, nx)`` cube of ``[I, Q, U]``.
     """
-    from utils.imutils import rotate_image_center
+    from nirc2pol.utils.imutils import rotate_image_center
 
     from .stokes import CRITICAL_ANGLES, rotate_qu
 

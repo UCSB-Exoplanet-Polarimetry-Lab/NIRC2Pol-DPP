@@ -239,7 +239,7 @@ def load_frames(frame_paths, rejects=()):
     rejects : container, optional
         Anything supporting ``in``: a list of filenames, or the
         ``{filename: reason}`` mapping from
-        :func:`utils.paths.load_rejects`. Matching is on the *basename*, so
+        :func:`nirc2pol.utils.paths.load_rejects`. Matching is on the *basename*, so
         a reject list is portable between machines.
 
     Returns
@@ -338,7 +338,7 @@ def select_frames(frames, target=None, frame_range=None,
     for a whole night, and this picks the subset that goes on to become
     science products. Frames that are simply *bad* belong in the reject file
     instead, where they carry a reason and persist across runs -- see
-    :func:`utils.paths.record_reject`.
+    :func:`nirc2pol.utils.paths.record_reject`.
 
     Parameters
     ----------

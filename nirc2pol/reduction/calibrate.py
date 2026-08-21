@@ -2,7 +2,7 @@
 
 Translated from AIR.jl's reduction.jl. Instrument-agnostic: the bad pixel
 mask, gain, saturation limit, and any filter-substitution exceptions are all
-parameters. NIRC2-specific values come from instruments/nirc2.py.
+parameters. NIRC2-specific values come from nirc2pol/instruments/nirc2.py.
 
 The main entry point is :func:`reduce_frame`, which applies::
 
@@ -17,8 +17,8 @@ import logging
 
 import numpy as np
 
-from utils.frame import Frame, all_header_keywords_match
-from utils.imutils import crop, image_is_larger, plus_mask
+from nirc2pol.utils.frame import Frame, all_header_keywords_match
+from nirc2pol.utils.imutils import crop, image_is_larger, plus_mask
 from . import defaults
 
 log = logging.getLogger(__name__)
@@ -90,7 +90,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
         Science frame needing a flat.
     master_flats : list of Frame
         Candidates, already in preference order from
-        :func:`reduction.masters.make_master_flats`.
+        :func:`nirc2pol.reduction.masters.make_master_flats`.
     ranked_keylists : list of list of str, optional
         Matching criteria from strictest to loosest; defaults to
         ``reduction.defaults.RANKED_FLATS_KEYLISTS``.
@@ -433,7 +433,7 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
         Master calibration frames; the best match is chosen per frame.
     masks : dict, optional
         Extra bad-pixel masks keyed by array shape, as produced by
-        :func:`reduction.masters.make_master_masks`.
+        :func:`nirc2pol.reduction.masters.make_master_masks`.
     bad_pixel_mask : ndarray of bool, optional
         Static detector bad-pixel mask (e.g. from
         ``instruments.nirc2.load_bad_pixel_mask()``).
@@ -586,7 +586,7 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
 
     reduced["RED-FN"] = f"reduced_{int(reduced['FRAMENO']):04d}.fits"
 
-    from utils.provenance import record_step
+    from nirc2pol.utils.provenance import record_step
 
     record_step(reduced, "dark/flat reduction",
                 dark=(matched_dark.get("FILENAME", "?")
