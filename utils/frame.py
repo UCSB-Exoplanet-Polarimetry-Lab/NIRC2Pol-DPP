@@ -138,20 +138,58 @@ class Frame:
         offending cards.
         """
         try:
-            fits.PrimaryHDU(data=self.data, header=self.header).writeto(
+            fits.PrimaryHDU(
+                data=self.data,
+                header=without_structural_cards(self.header)).writeto(
                 filename, overwrite=overwrite)
         except fits.verify.VerifyError:
             # some NIRC2 headers carry malformed CONTINUE cards
             log.warning("Malformed header cards in %s; writing a scrubbed "
                         "header", filename)
-            fits.PrimaryHDU(data=self.data,
-                            header=scrub_header(self.header)).writeto(
+            fits.PrimaryHDU(
+                data=self.data,
+                header=scrub_header(
+                    without_structural_cards(self.header))).writeto(
                 filename, overwrite=overwrite)
 
     def __repr__(self):
         """Short representation: filename and data shape."""
         name = self.get("FILENAME", "<no filename>")
         return f"Frame({name}, shape={self.data.shape})"
+
+
+# Cards that describe the HDU's structure rather than the observation.
+_STRUCTURAL_CARDS = ("SIMPLE", "XTENSION", "BITPIX", "NAXIS", "EXTEND",
+                     "PCOUNT", "GCOUNT", "BSCALE", "BZERO", "BLANK",
+                     "CHECKSUM", "DATASUM")
+
+
+def without_structural_cards(header):
+    """Header copy with the cards astropy manages itself removed.
+
+    Parameters
+    ----------
+    header : astropy.io.fits.Header
+        Header to clean.
+
+    Returns
+    -------
+    astropy.io.fits.Header
+        A copy without SIMPLE, BITPIX, NAXIS/NAXISn, EXTEND, PCOUNT, GCOUNT
+        and the checksums.
+
+    Notes
+    -----
+    Only used when writing. The keywords stay in the in-memory header
+    because NAXIS1 and NAXIS2 are matching keywords -- a dark has to agree
+    with its frame on readout size -- and astropy restores them on load.
+    """
+    clean = header.copy()
+    for key in list(clean):
+        if key in _STRUCTURAL_CARDS or (key.startswith("NAXIS")
+                                        and key[5:].isdigit()):
+            del clean[key]
+    return clean
 
 
 def scrub_header(header):
@@ -244,8 +282,11 @@ def save_frames(filename, frames, overwrite=True):
     frames = list(frames)
     if not frames:
         raise ValueError("no frames to save")
-    hdus = [fits.PrimaryHDU(data=frames[0].data, header=frames[0].header)]
-    hdus += [fits.ImageHDU(data=f.data, header=f.header) for f in frames[1:]]
+    hdus = [fits.PrimaryHDU(data=frames[0].data,
+                            header=without_structural_cards(frames[0].header))]
+    hdus += [fits.ImageHDU(data=f.data,
+                           header=without_structural_cards(f.header))
+             for f in frames[1:]]
     try:
         fits.HDUList(hdus).writeto(filename, overwrite=overwrite)
     except fits.verify.VerifyError:
@@ -315,15 +356,10 @@ def match_keys(frames, keylist):
         Maps ``tuple(frame[k] for k in keylist)`` to the list of frames
         with those values. This is how master darks and flats are split
         into one master per exposure setting.
-
-    Raises
-    ------
-    KeyError
-        If a frame is missing one of the keywords.
     """
     matched = {}
     for f in frames:
-        key = tuple(f[k] for k in keylist)
+        key = tuple(f[k] if k in f.header else None for k in keylist)
         matched.setdefault(key, []).append(f)
     return matched
 
@@ -342,8 +378,16 @@ def all_header_keywords_match(frame_a, frame_b, keywords):
     -------
     bool
         True if every keyword has the same value in both.
+
     """
-    return all(frame_a[k] == frame_b[k] for k in keywords)
+    for keyword in keywords:
+        in_a = keyword in frame_a.header
+        in_b = keyword in frame_b.header
+        if in_a != in_b:
+            return False          # one knows it, the other does not
+        if in_a and frame_a[keyword] != frame_b[keyword]:
+            return False
+    return True
 
 
 def get_between(frames, frameno_range):
