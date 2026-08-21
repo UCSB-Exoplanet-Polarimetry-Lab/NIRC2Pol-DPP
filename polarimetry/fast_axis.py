@@ -379,11 +379,10 @@ def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
     and :func:`polarimetry.fit_ip_uphi_all` -- takes the offset as an *input*,
     so the offset has to be fitted first with ``ip=None``, and is biased.
 
-    A leakage that needs no offset can be measured first and passed in here
-    instead, which removes the bias. :func:`polarimetry.measure_ip_coronagraph`
-    is such a measurement -- it works in the instrument frame -- but it is not
-    offered as an ``ip_method``, for the reasons in its own docstring, so this
-    path is for a leakage you have established some other way.
+    A leakage established some other way -- one that did not itself need an
+    offset -- can be passed in here instead, which removes the bias. Nothing
+    in the package currently produces one, so this path is for a value you
+    bring from outside.
 
     Parameters
     ----------
@@ -395,9 +394,9 @@ def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
     r_inner, r_outer : float
         Annulus [px] holding the disk -- this fit works on U_phi, where a
         tangentially polarized disk contributes nothing by definition, so the
-        annulus should *span* the disk rather than avoid it. (Contrast
-        :func:`polarimetry.measure_ip_annulus`, which works on Q/U and needs
-        the opposite: radii that exclude the disk.) ``r_inner`` must clear the
+        annulus should *span* the disk rather than avoid it -- the opposite
+        of what an estimator working on Q/U would want, where the disk does
+        contribute. ``r_inner`` must clear the
         occulted or saturated core; the default 20 px suits NIRC2
         coronagraphic data and should be checked against the actual mask.
     prepared : list of PreparedCycle, optional

@@ -61,15 +61,15 @@ def apply_mueller_model(instrument, cycles, model=None, **kwargs):
     so applying it settles both at once, which is why picking this route
     means not choosing a separate fast-axis or IP method.
 
-    That is the substantive difference from what is available today. The
-    empirical routes -- :func:`fit_fast_axis_butterfly`,
+    That is the substantive difference from what is available today. Every
+    empirical route -- :func:`fit_fast_axis_butterfly`,
     :func:`polarimetry.fit_ip_uphi_all`, :func:`polarimetry.fit_ip_uphi` --
-    derive their answer from the science data by assuming the source is
-    azimuthally polarized, so none can be used on a target where that is the
-    hypothesis under test. :func:`polarimetry.measure_ip_coronagraph` escapes
-    the assumption but needs high-contrast data and yields no offset. A
-    Mueller model carries the instrument's own calibration instead, so it
-    makes no assumption about the target at all.
+    derives its answer from the science data by assuming the source is
+    azimuthally polarized, so **none** can be used on a target where that is
+    the hypothesis under test, and there is no assumption-free alternative in
+    the package. A Mueller model carries the instrument's own calibration
+    instead, so it makes no assumption about the target at all. That is why
+    it matters, and not merely tidier.
 
     Parameters
     ----------
@@ -102,15 +102,14 @@ def apply_mueller_model(instrument, cycles, model=None, **kwargs):
         "that matrix, applying it settles both at once.\n\n"
         "Until then, choose an empirical route explicitly:\n"
         "  fast axis - fit_fast_axis_butterfly\n"
-        "  IP        - fit_ip_uphi_all, fit_ip_uphi (+ mean_ip), or "
-        "measure_ip_coronagraph\n\n"
-        "Note that every one of those except measure_ip_coronagraph ASSUMES "
-        "THE SOURCE IS AZIMUTHALLY POLARIZED, and will return a confident, "
-        "meaningless number on a target where that is what you are trying to "
-        "establish. measure_ip_coronagraph makes no such assumption but "
-        "requires a masked or saturated core, and yields no fast axis "
-        "offset. See polarimetry.mueller.MuellerMatrixModel for the "
-        "interface a model implements.")
+        "  IP        - fit_ip_uphi_all, or fit_ip_uphi (+ mean_ip)\n\n"
+        "Every one of those ASSUMES THE SOURCE IS AZIMUTHALLY POLARIZED, and "
+        "will return a confident, meaningless number on a target where that "
+        "is what you are trying to establish. The package has no "
+        "assumption-free alternative, so for such a target the leakage has "
+        "to be established some other way and passed in. See "
+        "polarimetry.mueller.MuellerMatrixModel for the interface a model "
+        "implements.")
 
 
 #

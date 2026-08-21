@@ -5,21 +5,27 @@ intensity into the polarized channels: an unpolarized source comes out with
 ``Q = ipq * I`` and ``U = ipu * I``. It is a property of the optical train,
 not of the sky.
 
-Two ways to measure it are provided, because neither works everywhere:
+One way to measure it is provided: :func:`fit_ip_uphi`, and its all-cycle
+counterpart :func:`fit_ip_uphi_all`, which minimize the U_phi residual.
 
-``fit_ip_uphi``
-    Minimize the U_phi residual. Needs a bright, azimuthally polarized
-    source (a disk) filling a usable annulus.
+**That route assumes the source is azimuthally polarized, and there is
+currently no alternative that does not.** A mask-edge estimator used to live
+here -- normalized Stokes just outside the occulting mask or saturated core,
+where the light is the star's own and taken to be unpolarized, which assumes
+nothing about the target. It was withdrawn because it needs an annulus that
+is both disk-free and bright, and on the data available no such annulus
+exists: measured on AB Aur the median intensity fell 63x between r = 22-40 px
+and r = 160-220 px, and the reported ipq tracked the shrinking denominator
+rather than the instrument, reaching -8.6% at the largest radii. Every choice
+made U_phi worse than no correction at all. See the git history if it is
+wanted back.
 
-``measure_ip_coronagraph``
-    Take the normalized Stokes right outside the occulting mask or the
-    saturated core, where the flux is the star's own PSF and is assumed
-    intrinsically unpolarized. **For high-contrast data only** -- it needs a
-    bright central source that is masked or saturated, so that a well-defined
-    annulus of pure starlight exists just outside it.
+So on a target where azimuthal polarization is the hypothesis under test,
+this module has nothing to offer, and that is the honest position until the
+Mueller matrix model lands.
 
-Both are stopgaps until the full Mueller matrix model lands, and both are
-applied at the same point in the chain that the Mueller model will occupy.
+These are a stopgap until that model, and are applied at the same point in
+the chain it will occupy.
 
 **IP must be removed in the instrument frame, before the rotation into
 sky.** ``Q_sky = Q cos(theta_rot) + U sin(theta_rot)``, so subtracting
@@ -55,9 +61,6 @@ class InstrumentalPolarization:
             Nelder-Mead minimization of the U_phi scatter
             (:func:`fit_ip_uphi`, :func:`fit_ip_uphi_all`, and
             ``mueller.fit_empirical_cycle_correction``).
-        ``"edge_annulus"``
-            Closed-form net normalized Stokes over an annulus
-            (:func:`measure_ip_annulus` and its wrappers).
         The field is free-form, so an experimental route may use another
         label; nothing validates it.
     scope : str
@@ -157,153 +160,6 @@ def _annulus(shape, r_inner, r_outer, center=None):
     from utils.imutils import make_annulus_mask
 
     return make_annulus_mask(shape, r_inner, r_outer, center=center)
-
-
-def measure_ip_annulus(Q, U, I, r_inner, r_outer, center=None,
-                       method="edge_annulus", scope="cycle"):
-    """Leakage from the flux-weighted normalized Stokes in an annulus.
-
-    The primitive behind :func:`measure_ip_coronagraph`, exposed separately so it
-    can be used on any Q/U/I you already have — a median cube, a single
-    cycle, a synthetic test case.
-
-    Takes ``ipq = sum(Q)/sum(I)`` over the annulus rather than the mean of
-    ``Q/I`` per pixel: the ratio of sums is flux-weighted and does not blow
-    up where ``I`` is small, whereas a per-pixel ratio is dominated by the
-    faintest pixels in the annulus.
-
-    Parameters
-    ----------
-    Q, U, I : ndarray
-        Instrument-frame Stokes planes.
-    r_inner, r_outer : float
-        Annulus radii [px]. The annulus should contain starlight that is
-        intrinsically unpolarized — just outside an occulting mask or a
-        saturated core — and no disk signal.
-    center : (cy, cx), optional
-        Defaults to the image centre.
-
-    Returns
-    -------
-    InstrumentalPolarization
-
-    Notes
-    -----
-    Assumes the light in the annulus is intrinsically unpolarized. Any real
-    polarized signal there (a bright inner disk, a companion) is absorbed
-    into the answer and then subtracted from the whole image, so choose the
-    radii to exclude it.
-
-    .. warning::
-
-       ``sum(Q) / sum(I)`` needs enough starlight in the annulus to be
-       stable, and that requirement fights the disk-free one. Measured on AB
-       Aur (2025-12-07 L', saturated core, no coronagraph), the median
-       intensity falls 63x between r = 22-40 px and r = 160-220 px, and the
-       reported ipq tracks the shrinking denominator rather than the
-       instrument::
-
-           22-40 px   -0.9%     150-200 px   -1.9%
-           40-80 px   +0.4%     160-220 px   -3.4%
-           80-150 px  +0.5%     200-224 px   -8.6%
-
-       The disk there runs to ~150 px, so no annulus is both disk-free and
-       bright enough. On that dataset every radius choice made U_phi worse
-       than no correction at all. This is a property of the data, not a fault
-       in the arithmetic -- but it means the method needs genuinely
-       high-contrast data, and needs checking against something before it is
-       trusted. It is currently not offered as an ``IP_METHOD`` for that
-       reason.
-    """
-    mask = _annulus(I.shape, r_inner, r_outer, center) & np.isfinite(I)
-    npix = int(mask.sum())
-    if npix == 0:
-        raise ValueError(
-            f"IP annulus r={r_inner}-{r_outer} px contains no finite pixels "
-            f"on a {I.shape[0]}x{I.shape[1]} frame")
-
-    total_i = float(np.nansum(I[mask]))
-    if not np.isfinite(total_i) or total_i == 0.0:
-        raise ValueError("IP annulus has zero total intensity; the radii are "
-                         "probably off the source")
-
-    ipq = float(np.nansum(Q[mask])) / total_i
-    ipu = float(np.nansum(U[mask])) / total_i
-    return InstrumentalPolarization(
-        ipq, ipu, method=method, scope=scope,
-        diagnostics={"r_inner": float(r_inner), "r_outer": float(r_outer),
-                     "npix": npix, "total_i": total_i})
-
-
-def measure_ip_coronagraph(instrument, cycle, r_inner=None, r_outer=None,
-                           center=None, scope="cycle", **dd_kwargs):
-    """Measure IP over one HWP cycle from starlight at the mask edge.
-
-    **For high-contrast data only.** The method reads the leakage off an
-    annulus of the star's own PSF just outside an occulting mask or a
-    saturated core, taking that light to be intrinsically unpolarized. It
-    therefore needs a bright central source that is coronagraphically masked
-    or saturated: without one there is no radius at which the flux is known
-    starlight rather than the science signal, and the answer would be
-    whatever the target happens to be polarized to.
-
-    Unlike :func:`fit_ip_uphi` and :func:`fit_ip_uphi_all`, this makes **no
-    assumption about the target's polarization structure**, so it is the one
-    to use where azimuthal polarization is the hypothesis under test -- an
-    AGN, a merger, a star field -- provided the contrast requirement is met.
-
-    The convenience wrapper: it runs ``double_difference`` to obtain the
-    cycle's Q/U/I, defaults the annulus to the instrument's occulting mask,
-    and hands off to :func:`measure_ip_annulus`. Identical arithmetic to
-    calling that directly on Stokes planes you already have.
-
-    Parameters
-    ----------
-    instrument, cycle
-        As for :func:`polarimetry.stokes.double_difference`.
-    r_inner, r_outer : float, optional
-        Annulus radii [px]. ``r_inner`` defaults to the instrument's
-        occulting radius for this frame (``instrument.occulting_radius``)
-        and ``r_outer`` to twice that. Supply them explicitly for
-        unocculted but saturated data, where the "mask" is the saturated
-        core and the instrument cannot know its size.
-    scope : {"cycle", "sequence_joint", "sequence_mean"}
-        Recorded on the result. For a *per-exposure* value see
-        ``polarimetry.stokes.normalized_single_difference``, and remove it
-        with ``double_difference(ip_frame_annulus=...)``.
-    **dd_kwargs
-        Forwarded to ``double_difference`` (``register_method``, etc).
-
-    Returns
-    -------
-    InstrumentalPolarization
-
-    Raises
-    ------
-    ValueError
-        If ``r_inner`` is not given and the instrument reports no occulting
-        radius, i.e. the data are not coronagraphic and you have to say
-        where the saturated core ends.
-    """
-    from .stokes import double_difference
-
-    if r_inner is None:
-        r_inner = instrument.occulting_radius(cycle[0].header)
-        if r_inner is None:
-            raise ValueError(
-                "No occulting radius for this frame, so the mask-edge IP "
-                "method has no annulus to work in. Pass r_inner/r_outer "
-                "explicitly (e.g. the radius of the saturated core), or use "
-                "fit_ip_uphi instead.")
-        r_outer = r_outer if r_outer is not None else 2.0 * r_inner
-    elif r_outer is None:
-        r_outer = 2.0 * r_inner
-
-    Q, U, I = double_difference(instrument, cycle, **dd_kwargs)
-    ip = measure_ip_annulus(Q, U, I, r_inner, r_outer, center=center,
-                            method="edge_annulus", scope=scope)
-    log.info("Mask-edge IP: %s", ip.describe())
-    return ip
 
 
 def _uphi_fit_terms(instrument, cycle, fast_axis_offset, mask_radius,
@@ -499,9 +355,10 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
     --------
     **Assumes the source is azimuthally polarized.** Do not use it on a
     target where that is the hypothesis under test — it will happily rotate
-    a genuine U_phi signal into Q_phi and report a confident answer. For an
-    AGN, a merger or a star field, use :func:`measure_ip_coronagraph` --
-    provided the data are high-contrast enough for it.
+    a genuine U_phi signal into Q_phi and report a confident answer. There is
+    currently no IP route here that avoids the assumption, so on an AGN, a
+    merger or a star field the answer is to measure the leakage some other
+    way and pass it in, not to reach for another function in this module.
     """
     from scipy.optimize import minimize
 
