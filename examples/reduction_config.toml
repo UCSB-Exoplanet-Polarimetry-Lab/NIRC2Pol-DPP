@@ -1,0 +1,105 @@
+# Reduction config for NIRC2Pol-DPP.
+#
+# Every option this pipeline takes, with its default. Delete a
+# line to accept the default; set it to "none" to switch the
+# option off, which is not always the same thing.
+#
+# Instrument constants (plate scale, detector epochs, beam
+# geometry seed) are NOT here -- they live in
+# instruments/nirc2.toml, because they are properties of the
+# instrument rather than choices about this reduction.
+
+[paths]
+# Root folder holding ONE SUBFOLDER PER NIGHT -- not the folder your FITS
+# files are in. Frames are read from <root>/<date>/raw/.
+observations_root = "/path/to/data_polmode"
+
+# The night, as DATE-OBS records it: UTC. A Keck night runs 04:00-16:00
+# UTC, so one UTC date names a whole night, one day after the HST evening.
+date = "2025-12-08"
+
+# Names the output files only. What the reduction covers is set by
+# select_target / select_frame_range.
+target = "AB_Aur"
+
+[selection]
+# Keep only frames whose TARGNAME matches, ignoring case, spaces,
+# underscores and hyphens. none keeps everything.
+select_target = "none"
+
+# Keep only these observation numbers, read from the filenames. One range
+# [932, 939], or several [[857, 900], [915, 930]]. Inclusive. none keeps
+# everything.
+select_frame_range = "none"
+
+[background]
+# How the sky/thermal background is removed, per Wollaston beam, inside
+# the Stokes builder. L'/M want dither or mean_box; JHK want annulus or
+# mean_box. Defaults to none because the right answer depends on the band
+# and the data, and the region a mean_box or annulus uses cannot be
+# guessed -- so this is a choice to make, not one to inherit. On-sky data
+# almost always needs one.
+# choices: 'mean_box', 'annulus', 'dither', none
+background_method = "none"
+
+# [ylow, yhigh, xlow, xhigh] for mean_box, in a source-free corner. [px]
+background_box = "none"
+
+# [r_inner, r_outer] for annulus. [px]
+background_annulus = "none"
+
+# Subtract dedicated master sky frames. Off by default: combined with a
+# mean-box or annulus background it removes the pedestal twice.
+use_master_skies = false
+
+[geometry]
+# Beam geometry, if you are overriding it. none measures it from the data,
+# which is the intended path -- the separation moves between epochs and a
+# stale value fails silently. [px]
+beam_top_row = "none"
+
+# See beam_top_row. [px]
+beam_x_offset = "none"
+
+# Star-centering algorithm. Use min for a saturated core: the default
+# smooth_peak hops between rim maxima of the donut and doubles the PSF.
+# choices: 'smooth_peak', 'quantile_peak', 'max', 'min', 'gaussian',
+# 'centroid', 'silhouette', 'symmetry', 'wings', 'crosscorr'
+register_method = "smooth_peak"
+
+[fast_axis]
+# How theta_off is obtained. mm_model takes it from the Mueller matrix
+# model, which settles the IP too (so ip_method must also be mm_model) and
+# is NOT IMPLEMENTED yet -- it raises. butterfly fits it from the data.
+# fixed uses theta_off below.
+# choices: 'mm_model', 'butterfly', 'fixed'
+fast_axis_method = "mm_model"
+
+# Fast axis offset, used when fast_axis_method = fixed. There is no
+# trusted automatic source: an HWP ladder on an internal source returns
+# theta_off + chi/2 with chi unknown. [deg]
+theta_off = "none"
+
+# [r_inner, r_outer] annulus for the butterfly fit. This works on U_phi,
+# where a tangentially polarized disk contributes nothing by definition,
+# so it should SPAN the disk and need only clear the core. [px]
+fit_radii = [25.0, 150.0]
+
+[instrumental_polarization]
+# How the I -> Q/U leakage is measured, named <method>_<scope>: the scope
+# is also the level it is applied at. mm_model is NOT IMPLEMENTED and
+# raises. Both fit_uphi routes ASSUME AN AZIMUTHALLY POLARIZED SOURCE and
+# return a confident, meaningless number where that is the hypothesis
+# under test. none leaves it uncorrected.
+# choices: 'mm_model', 'fit_uphi_per_cycle', 'fit_uphi_all', none
+ip_method = "mm_model"
+
+# Radius excluded from the fit_uphi annulus, covering the saturated or
+# occulted core. [px]
+ip_mask_radius = 22.0
+
+# [r_inner, r_outer] for de Boer's final step: rotating into the sky frame
+# mixes Q and U, so halo signal that cancelled in the instrument frame
+# partly reappears. Must be DISK-FREE -- this one works on Q/U, where a
+# disk does contribute. none skips it. [px]
+final_halo_annulus = "none"
