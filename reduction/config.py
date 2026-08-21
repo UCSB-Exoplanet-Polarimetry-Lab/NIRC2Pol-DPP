@@ -33,25 +33,6 @@ REGISTER_METHODS = ("smooth_peak", "quantile_peak", "max", "min", "gaussian",
 FAST_AXIS_METHODS = ("mm_model", "butterfly", "fixed")
 IP_METHODS = ("mm_model", "fit_uphi_per_cycle", "fit_uphi_all", None)
 
-#: Names that were once valid, and what to do instead. Kept so a config
-#: written against an older version fails with directions rather than a bare
-#: "not a valid choice".
-RETIRED = {
-    "butterfly_joint":
-        "the butterfly fit now determines the fast axis offset only, and the "
-        "leakage is chosen separately with ip_method",
-    "edge_annulus_all":
-        "the edge_annulus routes are withdrawn: sum(Q)/sum(I) needs an "
-        "annulus that is both disk-free and bright, and on AB Aur no such "
-        "annulus exists -- use fit_uphi_all",
-    "edge_annulus_per_cycle": "withdrawn, see edge_annulus_all",
-    "edge_annulus_per_frame": "withdrawn, see edge_annulus_all",
-    "fit_uphi_per_frame":
-        "one exposure gives a single difference, +-Q or +-U, never both, so "
-        "U_phi cannot be formed from it -- use fit_uphi_per_cycle",
-}
-
-
 def _f(default, doc, group, choices=None, unit=None):
     """A config field: its default, what it means, and what it accepts.
 
@@ -180,9 +161,6 @@ class ReductionConfig:
             value = getattr(self, f.name)
             if choices is None or value in choices:
                 continue
-            if value in RETIRED:
-                raise ValueError(
-                    f"{f.name} = {value!r} is retired: {RETIRED[value]}.")
             raise ValueError(
                 f"{f.name} must be one of {choices}, not {value!r}")
 
