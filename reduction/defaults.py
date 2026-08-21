@@ -6,10 +6,23 @@ FITS keywords, so they work for many instruments), but every function that
 uses them accepts an explicit keylist so other instruments can override.
 """
 
-# keywords that must match for a dark to pair with a frame, from most to
-# least strict — see reduction.calibrate.find_closest_dark
-DARKS_KEYLIST = ["NAXIS1", "NAXIS2", "ITIME", "COADDS", "SAMPMODE", "READS"]
-
+# Keywords that must match for a dark to pair with a frame. All of them:
+# dark current scales with ITIME and COADDS, and the bias structure left
+# behind depends on the sampling mode and how many reads went into it, so a
+# dark taken any other way is the wrong dark. Size is included because a
+# subarray reads out differently from the full frame.
+#
+# This list used to be the first of five, each dropping another keyword,
+# ending at ["ITIME"] alone -- which accepted a 512x512 CDS dark with one
+# coadd in place of a 1024x1024 MCDS dark with 45. Substituting the wrong
+# dark does not fail loudly, it just subtracts the wrong pedestal, so there
+# is no relaxation now.
+# Dark matching relaxes down this ladder until something matches, following
+# AIR.jl. The first entry is the only one that is physically right: dark
+# current scales with ITIME and COADDS, and the bias structure depends on the
+# sampling mode and the number of reads. Everything below it trades a known
+# error for an answer, so find_closest_dark warns on every rung but the first,
+# and warns again if even ITIME cannot be matched.
 RANKED_DARKS_KEYLISTS = [
     ["NAXIS1", "NAXIS2", "ITIME", "COADDS", "SAMPMODE", "READS"],
     ["NAXIS1", "NAXIS2", "ITIME", "COADDS", "SAMPMODE"],
@@ -17,6 +30,8 @@ RANKED_DARKS_KEYLISTS = [
     ["NAXIS1", "NAXIS2", "ITIME"],
     ["ITIME"],
 ]
+
+DARKS_KEYLIST = RANKED_DARKS_KEYLISTS[0]
 
 FLATS_KEYLIST = ["NAXIS1", "NAXIS2", "ITIME", "COADDS", "FILTER", "SAMPMODE", "READS"]
 

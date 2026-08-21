@@ -181,7 +181,9 @@ def _at_flat_position(frame, arcsec_threshold):
 
 def is_lampon_frame(frame, arcsec_threshold=100.0, min_flat_counts=100.0):
     """Dome flat with the lamp on: telescope at the flat position, AO loops
-        open, shutter open, and counts above ``min_flat_counts``.
+        open, shutter open, and counts above ``min_flat_counts``. Frames
+        passing this test are dome flats (``FLATTYPE = "DOME"``); the lamp is
+        how they are recognised, not a separate kind of flat.
 
         Lamp-*off* frames are not classified at all. They carry no useful
         information -- in JHK they are meaningless, and at L' the dome lamp is
@@ -220,11 +222,13 @@ def is_dark_frame(frame):
 def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
     """Classify raw NIRC2 FITS files by type using their headers.
 
-        Returns a dict of filename lists with keys ``"sci"``, ``"flats"``,
-        ``"flats_sky"``, ``"flats_lampon"``, ``"darks"``. Frames missing
+        Returns a dict of filename lists with keys ``"sci"``,
+        ``"flats_dome"``, ``"flats_sky"``, ``"darks"``. Frames missing
         required header keywords are dropped with a warning.
 
-        Lamp-on flats stay in ``flats_lampon`` and become LAMP-type masters.
+        A flat is one of two kinds -- the dome screen or the twilight sky.
+        Whether it is polarimetric is a separate property, decided later from
+        the HWP angle, and either kind can be.
 
     Classify raw files by type, from their headers.
 
@@ -238,8 +242,8 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
     Returns
     -------
     dict
-        Filename lists under ``"sci"``, ``"flats"``, ``"flats_sky"``,
-        ``"flats_lampon"`` and ``"darks"``.
+        Filename lists under ``"sci"``, ``"flats_dome"``, ``"flats_sky"``
+        and ``"darks"``.
     """
     from utils.frame import Frame
 
@@ -254,12 +258,12 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
         frames.append(frame)
         kept_filenames.append(fn)
 
-    sorted_files = {"sci": [], "flats": [], "flats_sky": [],
-                    "flats_lampon": [], "darks": []}
+    sorted_files = {"sci": [], "flats_dome": [], "flats_sky": [],
+                    "darks": []}
 
     for fn, frame in zip(kept_filenames, frames):
         if is_lampon_frame(frame, arcsec_threshold, min_flat_counts):
-            sorted_files["flats_lampon"].append(fn)
+            sorted_files["flats_dome"].append(fn)
         elif is_sky_twilight_frame(frame):
             sorted_files["flats_sky"].append(fn)
         elif is_dark_frame(frame):
@@ -527,8 +531,8 @@ class NIRC2PolarimetryData(PolarimetryData):
         Returns
         -------
         dict
-            Filename lists under ``"sci"``, ``"flats"``, ``"flats_sky"``,
-            ``"flats_lampon"`` and ``"darks"``.
+            Filename lists under ``"sci"``, ``"flats_dome"``,
+            ``"flats_sky"`` and ``"darks"``.
         """
         return sort_frames(filenames, **kwargs)
 

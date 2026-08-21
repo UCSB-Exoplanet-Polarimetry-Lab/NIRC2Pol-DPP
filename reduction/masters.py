@@ -13,7 +13,7 @@ Typical use::
 
     master_darks, dark_masks = make_master_darks(dark_frames, bad_pixel_mask=bpm)
     master_flats, flat_masks = make_master_flats(
-        flat_frames, sky_frames, lampon_frames,
+        dome_frames, sky_frames,
         master_darks, bad_pixel_mask=bpm)
     master_masks = make_master_masks(dark_masks, flat_masks)
 """
@@ -122,7 +122,12 @@ def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
     master_masks = {}
     for key, group in frame_dict.items():
         stack = framelist_to_cube(group)
-        master = Frame(method(stack, axis=0))
+        # Keep the group's header rather than starting empty and adding
+        # back only the grouping keys. A master rebuilt from its keylist
+        # knows nothing else about how it was taken -- which is why a master
+        # flat, grouped without the sampling keywords, could not be matched
+        # to a master dark that had them.
+        master = Frame(method(stack, axis=0), group[0].header.copy())
 
         # per-frame sigma clip masks, OR-ed together
         from utils.imutils import make_sigma_clip_mask
@@ -145,7 +150,12 @@ def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
         # repopulate the header with the grouping keys so masters can be
         # matched to science frames later
         for k, v in zip(keylist, key):
-            master[k] = v
+            # None means the group's frames did not carry this keyword, so
+            # the master must not either: writing it would give the master a
+            # keyword its own inputs lacked, and a science frame without it
+            # would then fail to match.
+            if v is not None:
+                master[k] = v
 
         master["FILENAME"] = group[0].get("FILENAME", "")
         master["NFRAMES"] = len(group)
@@ -255,11 +265,13 @@ def split_polarimetric_flats(flat_frames, modulator_keyword, critical_angles,
 
 
 def make_flats(flat_frames, master_darks, keylist=None, bad_pixel_mask=None,
-               flattype="REGULAR", min_frames=3, polarimetric=False, **kwargs):
+               flattype="DOME", min_frames=3, polarimetric=False,
+               allow_flat_without_dark=False, **kwargs):
     """Build master flats: median-combine, subtract the best-matching master
-        dark, then normalize by the median. ``FLATTYPE`` records how each flat
-        was made (and whether a dark was available); ``POLFLAT`` records whether
-        the flats were a critical-angle polarimetric set.
+        dark, then normalize by the median. ``FLATTYPE`` records which kind of
+        flat this is -- ``"DOME"`` or ``"SKY"`` -- and ``POLFLAT`` records
+        whether it was a critical-angle polarimetric set. The two are
+        independent: a polarimetric flat can be either kind.
 
     Parameters
     ----------
@@ -272,11 +284,17 @@ def make_flats(flat_frames, master_darks, keylist=None, bad_pixel_mask=None,
     bad_pixel_mask : ndarray of bool, optional
         Static detector mask.
     flattype : str, optional
-        Tag written to ``FLATTYPE``; suffixed ``+NODARK`` when no dark matched.
+        Tag written to ``FLATTYPE``: ``"DOME"`` or ``"SKY"``.
     min_frames : int, optional
         Minimum frames per master.
     polarimetric : bool, optional
-        Mark the results ``POLFLAT``, which ranks them first.
+        Mark the results ``POLFLAT``.
+    allow_flat_without_dark : bool, optional
+        Build a flat even when no dark matched it. Off by default, because a
+        flat that keeps its own dark current is not a flat field: the pedestal
+        survives normalization as a multiplicative error that divides straight
+        into every science frame. Turning it on tags the result ``+NODARK`` so
+        the choice is recorded in the product.
     **kwargs
         Passed to :func:`make_masters`.
 
@@ -290,10 +308,15 @@ def make_flats(flat_frames, master_darks, keylist=None, bad_pixel_mask=None,
     keylist = keylist if keylist is not None else defaults.FLATS_KEYLIST
 
     if len(flat_frames) < min_frames:
-        log.warning("Not enough flat frames found, skipping...")
+        log.warning("Only %d %s%s flat frames, fewer than the %d required, so "
+                    "no master is built from them. Note that a mixed set split "
+                    "by HWP angle can leave both halves below this threshold.",
+                    len(flat_frames), "polarimetric " if polarimetric else "",
+                    flattype, min_frames)
         return {}, {}
 
-    master_flats, masks = make_masters(flat_frames, keylist, kind="flat",
+    master_flats, masks = make_masters(flat_frames, keylist,
+                                       kind=f"{flattype.lower()} flat",
                                        bad_pixel_mask=bad_pixel_mask,
                                        min_frames=min_frames, **kwargs)
 
@@ -304,9 +327,20 @@ def make_flats(flat_frames, master_darks, keylist=None, bad_pixel_mask=None,
             log.info("Subtracting dark from master flat %s", key)
             flat.data -= matched_dark.data
             flat["FLATTYPE"] = flattype
-        else:
-            log.warning("No matching dark found for master flat %s", key)
+        elif allow_flat_without_dark:
+            log.warning("Building master flat %s with NO DARK SUBTRACTED "
+                        "because allow_flat_without_dark=True. Its dark "
+                        "current survives normalization and will divide into "
+                        "every frame this flat calibrates.", key)
             flat["FLATTYPE"] = f"{flattype}+NODARK"
+        else:
+            raise ValueError(
+                f"No dark matches master flat {key}, so it cannot be dark "
+                f"subtracted. A flat still holding its dark current is not a "
+                f"flat field -- the pedestal survives normalization and "
+                f"divides into every science frame. Take darks matching the "
+                f"flats' exposure, or pass allow_flat_without_dark=True to "
+                f"build it anyway on purpose.")
 
         flat.data /= flat["MAMEDIAN"]
 
@@ -368,100 +402,14 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
     return list(master_skies.values()), list(masks.values())
 
 
-def make_lamp_flats(lampon_frames, master_darks, keylist=None,
-                    bad_pixel_mask=None, min_frames=3, **kwargs):
-    """Build lamp flats: lamp-on minus the matched master dark, normalized
-        by the median.
-
-        Lamp-off frames are not used. They are meaningless in JHK, and at L' the
-        dome lamp is swamped by thermal background so sky flats are used
-        instead, which leaves the dark as the thing to subtract.
-
-    Parameters
-    ----------
-    lampon_frames : list of Frame
-        Lamp-on dome flats.
-    master_darks : list of Frame
-        Darks to subtract.
-    keylist : list of str, optional
-        Grouping keywords.
-    bad_pixel_mask : ndarray of bool, optional
-        Static detector mask.
-    min_frames : int, optional
-        Minimum frames per master.
-    **kwargs
-        Passed to :func:`make_masters`.
-
-    Returns
-    -------
-    masters : dict
-        Maps the group key to the master flat, tagged ``LAMP`` when a dark was
-        subtracted and ``LAMP+NODARK`` when none matched.
-    masks : dict
-        Matching bad-pixel masks.
-
-    Notes
-    -----
-    The tag is load-bearing, not bookkeeping:
-    :func:`reduction.calibrate.find_closest_flat` refuses a flat whose type is
-    not the one the band requires, and :func:`flat_sort_key` ranks ``+NODARK``
-    variants below dark-subtracted ones.
-    """
-    keylist = keylist if keylist is not None else defaults.FLATS_KEYLIST
-
-    def _make(frames, label):
-        """Combine one labelled set of frames, or skip it if too few.
-
-        Parameters
-        ----------
-        frames : list of Frame
-            Frames to combine.
-        label : str
-            Name used in the "not enough frames" warning.
-
-        Returns
-        -------
-        masters, masks : dict
-            As :func:`make_masters`, or empty dicts when there were too few.
-        """
-        if len(frames) < min_frames:
-            log.warning("Not enough %s frames found, skipping...", label)
-            return {}, {}
-        return make_masters(frames, keylist, kind="lamp flat",
-                            bad_pixel_mask=bad_pixel_mask,
-                            min_frames=min_frames, **kwargs)
-
-    master_lampon, lampon_masks = _make(lampon_frames, "lamp-on")
-
-    master_flat_lamp = {}
-    master_flat_lamp_masks = {}
-    for key, flat in master_lampon.items():
-        _, matched_dark = find_closest_dark(flat, master_darks)
-        if matched_dark is None:
-            log.warning("No matching dark for lamp flat %s; it will rank "
-                        "below dark-subtracted flats", key)
-            sub_frame = np.zeros(flat.shape)
-            flat["FLATTYPE"] = "LAMP+NODARK"
-        else:
-            sub_frame = matched_dark.data
-            flat["FLATTYPE"] = "LAMP"
-        master_flat_lamp_masks[key] = lampon_masks[key]
-
-        flat.data -= sub_frame
-        flat.data /= np.median(flat.data)
-        master_flat_lamp[key] = flat
-
-    return master_flat_lamp, master_flat_lamp_masks
-
-
 def required_flat_type_for(band, override=None, flat_types=None,
                            default=None):
     """Which flat type a band requires: sky flats in the thermal infrared,
-        lamp flats in the near infrared. ``override`` (e.g. "SKY") wins, letting
+        dome flats in the near infrared. ``override`` (e.g. "SKY") wins, letting
         a user ask for sky flats in JHK.
 
         This is a requirement rather than a preference -- reducing L' data with
-        a lamp flat gives a wrong answer that still looks reasonable -- and is
+        a dome flat gives a wrong answer that still looks reasonable -- and is
         enforced by :func:`reduction.calibrate.find_closest_flat`.
 
     Parameters
@@ -469,7 +417,7 @@ def required_flat_type_for(band, override=None, flat_types=None,
     band : str
         Observing band, e.g. from ``instruments.nirc2.band_of``.
     override : str, optional
-        Force a type, ``"SKY"`` or ``"LAMP"``; case-insensitive.
+        Force a type, ``"SKY"`` or ``"DOME"``; case-insensitive.
     flat_types : mapping, optional
         Band to required type, from the instrument
         (``instrument.required_flat_types``). Which flat a band needs is a
@@ -497,10 +445,16 @@ def flat_sort_key(flat, required_type=None, flat_types=None,
                   default_flat_type=None):
     """Sort key implementing the flat preference order.
 
-        1. polarimetric flats (critical-angle sets) before all others
-        2. flats with a dark subtracted before "+NODARK" variants
-        3. the band-required type (sky for L'/M, lamp for JHK) before others
+        1. filter, which groups the list; a flat in the wrong filter is never
+           eligible in the first place, so this only makes the order readable
+        2. the band-required type (sky for L'/M, dome for JHK) before the other
+           kind -- the wrong illumination is a worse error than losing the
+           critical-angle property
+        3. polarimetric (critical-angle) sets before the rest
         4. more frames first
+
+        Dark subtraction is not ranked here: a flat without a dark is refused
+        outright by :func:`make_flats` unless deliberately allowed.
 
     Parameters
     ----------
@@ -520,29 +474,24 @@ def flat_sort_key(flat, required_type=None, flat_types=None,
     """
     flattype = str(flat.get("FLATTYPE", ""))
     base = flattype.split("+")[0]
-    nodark = "NODARK" in flattype
 
     band = str(flat.get("FWINAME")
                or str(flat.get("FILTER", "")).split("+")[0].strip())
     wanted = required_flat_type_for(band, required_type, flat_types,
                                    default_flat_type)
 
-    if base == wanted:
-        type_rank = 0
-    elif base in ("SKY", "LAMP"):
-        type_rank = 1          # the other real flat-field kind
-    else:
-        type_rank = 2          # generic "REGULAR"
+    type_rank = 0 if base == wanted else 1
 
-    return (not flat.get("POLFLAT", False), nodark, type_rank,
+    return (band, type_rank, not flat.get("POLFLAT", False),
             -flat.get("NFRAMES", 0))
 
 
-def make_master_flats(flat_frames, sky_frames, lampon_frames,
+def make_master_flats(dome_frames, sky_frames,
                       master_darks, keylist=None, bad_pixel_mask=None,
                       modulator_keyword=None, critical_angles=None,
                       required_flat_type=None, required_flat_types=None,
-                      default_required_flat_type=None, instrument=None,
+                      default_required_flat_type=None,
+                      allow_flat_without_dark=False, instrument=None,
                       **kwargs):
     """Build every available kind of flat and return a single ranked list:
         for any science frame, the first matching flat in the list is the best
@@ -551,18 +500,21 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
         Pass ``instrument`` and the instrument-derived arguments below are
         filled in from it; anything given explicitly still wins.
 
-        When ``modulator_keyword`` and ``critical_angles`` are known, dome and
-        regular flats are split into a *polarimetric* set (taken at the
-        critical angles) and everything else. Polarimetric flats are ranked
-        ahead of all other flats, so they are used whenever they exist, and
-        older data without them falls back to regular flats automatically.
+        A flat is described by two independent properties. Its *kind* is where
+        the light came from -- ``"DOME"`` (the dome screen, lamp on or off) or
+        ``"SKY"`` (twilight) -- and that is what the band requirement is about.
+        Whether it is *polarimetric* is a separate question, decided by the HWP
+        angle, and either kind can be: a polarimetric dome flat and a
+        polarimetric sky flat are both ordinary things to have. So when
+        ``modulator_keyword`` and ``critical_angles`` are known, both incoming
+        lists are split at the critical angles, giving up to four masters from
+        two kinds.
 
-        Ordering (see :func:`flat_sort_key`): polarimetric flats first, then
-        dark-subtracted before darkless, then the band-required type — sky
-        flats for L'/M where the dome lamp is swamped by thermal background,
-        lamp flats for JHK — then the set built from the most frames.
-        ``required_flat_type`` ("SKY" or "LAMP") overrides the band default,
-        e.g. to use sky flats in JHK.
+        Ordering (see :func:`flat_sort_key`): by filter, then the band-required
+        kind — sky flats for L'/M where the dome lamp is swamped by thermal
+        background, dome flats for JHK — then polarimetric before not, then the
+        set built from the most frames. ``required_flat_type`` ("SKY" or
+        "DOME") overrides the band default, e.g. to use sky flats in JHK.
 
         Ordering is only a preference among *valid* flats; the type requirement
         itself is enforced later, per science frame, by
@@ -572,14 +524,13 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
 
     Parameters
     ----------
-    flat_frames : list of Frame
-        Generic flats.
+    dome_frames : list of Frame
+        Dome flats, lamp on or off.
     sky_frames : list of Frame
-        Sky flats.
-    lampon_frames : list of Frame
-        Lamp-on dome flats.
+        Twilight sky flats.
     master_darks : list of Frame
-        Darks to subtract.
+        Darks to subtract. Every flat needs one; see
+        ``allow_flat_without_dark``.
     keylist : list of str, optional
         Grouping keywords.
     bad_pixel_mask : ndarray of bool, optional
@@ -594,6 +545,9 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
         Fallback for bands that mapping does not list.
     required_flat_type : str, optional
         Override the band's required type.
+    allow_flat_without_dark : bool, optional
+        Build flats that no dark matched, tagging them ``+NODARK``. Off by
+        default; see :func:`make_flats`.
     **kwargs
         Passed through to the individual flat builders.
     instrument : PolarimetryData, optional
@@ -627,35 +581,49 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
     bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
                                          "bad_pixel_mask", call=True)
 
-    pol_flats, pol_masks = {}, {}
-    if modulator_keyword is not None and critical_angles is not None:
-        pol_frames, flat_frames = split_polarimetric_flats(
-            flat_frames, modulator_keyword, critical_angles)
-        if pol_frames:
-            log.info("Found %d polarimetric flats at critical angles "
-                     "(%d other flats)", len(pol_frames), len(flat_frames))
-            pol_flats, pol_masks = make_flats(
-                pol_frames, master_darks, keylist=keylist,
-                bad_pixel_mask=bad_pixel_mask, polarimetric=True, **kwargs)
+    def build_kind(frames, flattype):
+        """Build one kind of flat, split into polarimetric and not."""
+        if not frames:
+            return [], []
+
+        if modulator_keyword is not None and critical_angles is not None:
+            pol_frames, plain_frames = split_polarimetric_flats(
+                frames, modulator_keyword, critical_angles)
+            if pol_frames:
+                log.info("Found %d polarimetric %s flats at critical angles "
+                         "(%d other %s flats)", len(pol_frames),
+                         flattype.lower(), len(plain_frames),
+                         flattype.lower())
+            else:
+                log.info("No critical-angle polarimetric %s flats found",
+                         flattype.lower())
+            groups = [(pol_frames, True), (plain_frames, False)]
         else:
-            log.info("No critical-angle polarimetric flats found; "
-                     "falling back to regular flats")
+            groups = [(frames, False)]
 
-    master_flats, flats_masks = make_flats(
-        flat_frames, master_darks, keylist=keylist,
-        bad_pixel_mask=bad_pixel_mask, **kwargs)
+        built, built_masks = [], []
+        for group_frames, polarimetric in groups:
+            if not group_frames:
+                continue
+            masters, masks = make_flats(
+                group_frames, master_darks, keylist=keylist,
+                bad_pixel_mask=bad_pixel_mask, flattype=flattype,
+                polarimetric=polarimetric,
+                allow_flat_without_dark=allow_flat_without_dark, **kwargs)
+            built += list(masters.values())
+            built_masks += list(masks.values())
+        return built, built_masks
 
-    master_flats_sky, sky_masks = make_flats(
-        sky_frames, master_darks, keylist=keylist,
-        bad_pixel_mask=bad_pixel_mask, flattype="SKY", **kwargs)
+    # Concatenated, not merged. make_flats returns dicts keyed by the grouping
+    # key, which does not include FLATTYPE or POLFLAT, so merging them dropped
+    # a sky flat whenever a dome flat shared its filter and exposure settings
+    # -- and at L' the sky flat is the one the band requires. Nothing here is a
+    # duplicate: sort_frames puts each raw frame in exactly one bucket, and the
+    # polarimetric split partitions each bucket.
+    dome_flats, dome_masks = build_kind(dome_frames, "DOME")
+    sky_flats, sky_masks = build_kind(sky_frames, "SKY")
 
-    master_flats_lamp, lamp_masks = make_lamp_flats(
-        lampon_frames, master_darks, keylist=keylist,
-        bad_pixel_mask=bad_pixel_mask, **kwargs)
-
-    # polarimetric flats keep separate keys so they are never merged away
-    combined = {**master_flats, **master_flats_sky, **master_flats_lamp}
-    flats = list(combined.values()) + list(pol_flats.values())
+    flats = dome_flats + sky_flats
     flats.sort(key=lambda f: flat_sort_key(
         f, required_flat_type, required_flat_types,
         default_required_flat_type))
@@ -666,8 +634,8 @@ def make_master_flats(flat_frames, sky_frames, lampon_frames,
                            f"{'/POL' if f.get('POLFLAT') else ''}"
                            f"(n={f['NFRAMES']})" for f in flats[:6]))
 
-    combined_masks = {**flats_masks, **sky_masks, **lamp_masks, **pol_masks}
-    return flats, list(combined_masks.values())
+    masks = dome_masks + sky_masks
+    return flats, masks
 
 
 def make_master_masks(*mask_lists):

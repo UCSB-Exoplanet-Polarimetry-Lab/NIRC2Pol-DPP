@@ -63,8 +63,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
                       flat_override=None, allow_no_flat=False):
     """Find the best-matching flat.
 
-        Two things are mandatory. The filter must always match — a flat in another filter describes the
-        wrong throughput pattern — but exposure settings are irrelevant, since
+        Two things are mandatory. The filter must always match but exposure settings are irrelevant, since
         the flat is normalized. Detector size is only a preference: a flat
         covering a *larger* region is trimmed to the frame, so a full-frame
         flat can calibrate a subarray exposure. Matching therefore tries
@@ -98,7 +97,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     exceptions : dict, optional
         Maps a filter substring to acceptable substitutes.
     required_flat_type : str, optional
-        Override the band's required type, ``"SKY"`` or ``"LAMP"``.
+        Override the band's required type, ``"SKY"`` or ``"DOME"``.
     allow_flat_type_mismatch : bool, optional
         Downgrade a type mismatch from an error to a warning, recording
         ``FLATMISM`` in the returned flat's header. The returned flat also
@@ -134,8 +133,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
 
     if flat_override is not None:
         # The caller named this one, so use it whatever its filter. The
-        # pipeline never picks a wrong-filter flat by itself -- guessing a
-        # substitute is exactly what the old flat-exceptions table did.
+        # pipeline never picks a wrong-filter flat by itself, but the user can override that if they know what they are doing.
         ind, matched_flat = None, flat_override
         log.warning("Using a hand-picked %s flat for %s frame %s; the filters "
                     "do not have to agree when the flat is named explicitly",
@@ -150,7 +148,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
                 break
 
     def _no_usable_flat(reason):
-        """Refuse, unless the caller has said an unflattened frame is fine.
+        """Error handling, unless the caller has said an unflattened frame is fine.
 
         Both routes here -- nothing matched the filter, and the only match is
         too small to cover the frame -- end in the same place: dividing by
@@ -183,8 +181,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     # Record the outcome on the flat we hand back, so reduce_frame can carry
     # it onto the product. A requirement that was skipped or overridden has
     # to be readable in the file afterwards, not only in a log line that
-    # scrolled past while it happened. Copy first: the master flat is shared
-    # between frames and must not be stamped in place.
+    # scrolled past while it happened. 
     matched_flat = Frame(matched_flat.data, matched_flat.header.copy())
     matched_flat["FLATCHK"] = (wanted is not None,
                                "band flat-type requirement was checked")
@@ -193,10 +190,6 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
                                "flat was named explicitly, not matched")
 
     if wanted is None:
-        # No instrument table, so there is nothing to check against. Say so
-        # once: silently skipping a requirement is how a wrong flat gets
-        # through looking plausible, which is the failure this check exists
-        # to prevent.
         global _WARNED_NO_FLAT_TYPE_TABLE
         if not _WARNED_NO_FLAT_TYPE_TABLE:
             _WARNED_NO_FLAT_TYPE_TABLE = True
@@ -209,9 +202,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
         available = sorted({str(f.get("FLATTYPE", "UNKNOWN")).split("+")[0]
                             for f in master_flats})
         message = (f"{band}-band data requires a {wanted} flat but the best "
-                   f"match is {got}; available types: {available}. Reducing "
-                   f"with the wrong kind of flat gives a wrong answer that "
-                   f"still looks plausible.")
+                   f"match is {got}; available types: {available}.")
         if not allow_flat_type_mismatch:
             raise ValueError(message)
         log.warning("%s Proceeding because allow_flat_type_mismatch=True.",
@@ -234,10 +225,23 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     return ind, matched_flat
 
 
+def _dark_relaxation_cost(given_up):
+    """Name what a loosened dark match actually costs, in one line."""
+    costs = []
+    if "SAMPMODE" in given_up or "READS" in given_up:
+        costs.append("the sampling mode and read count set the bias structure, "
+                     "so this dark holds a pedestal the frame never left")
+    if "COADDS" in given_up:
+        costs.append("COADDS differs, so the dark is rescaled arithmetically "
+                     "instead of measured at the frame's coadd count")
+    if "NAXIS1" in given_up or "NAXIS2" in given_up:
+        costs.append("the readout size differs, and a subarray clocks out "
+                     "faster than the full frame")
+    return "; ".join(costs)
+
+
 def find_closest_dark(frame, master_darks, ranked_keylists=None):
-    """Find the best-matching dark, relaxing the match criteria step by step
-        (see ``reduction.defaults.RANKED_DARKS_KEYLISTS``). When only ITIME
-        matches, the dark is rescaled by the frame's COADDS and cropped to size.
+    """Find the dark that matches this frame, relaxing until one does.
 
     Parameters
     ----------
@@ -246,19 +250,29 @@ def find_closest_dark(frame, master_darks, ranked_keylists=None):
     master_darks : list of Frame
         Candidates.
     ranked_keylists : list of list of str, optional
-        Matching criteria from strictest to loosest; defaults to
-        ``reduction.defaults.RANKED_DARKS_KEYLISTS``.
+        Matching criteria, tried in order until one matches; defaults to
+        ``reduction.defaults.RANKED_DARKS_KEYLISTS``. Only the first is
+        physically right -- dark current scales with ITIME and COADDS, and the
+        bias left behind depends on the sampling mode and the number of reads.
+        Every rung below gives one of those up.
 
     Returns
     -------
     index : int or None
         Position of the match in the list, or None.
     master : Frame or None
-        The matching master, or None when nothing matched.
+        The matching master, or None when nothing matched at all.
 
     Notes
     -----
-    The loosest level matches on ITIME alone, at which point the dark is
+    This never raises. An exact match is silent; every looser match warns,
+    naming the keywords it gave up and what they cost. Failing every rung it
+    warns and returns ``None, None``, and the caller reduces without a dark --
+    the same choice AIR.jl makes. That outcome is at least visible in the
+    header afterwards (``DARKSUB = False``); a subtly wrong dark is not, which
+    is why the relaxation is the noisy part.
+
+    The loosest rung matches on ITIME alone, at which point the dark is
     rescaled by the frame's COADDS and cropped to size -- so one set of
     full-frame darks can serve every subarray of a night.
     """
@@ -266,17 +280,38 @@ def find_closest_dark(frame, master_darks, ranked_keylists=None):
                        else defaults.RANKED_DARKS_KEYLISTS)
 
     if not master_darks:
+        log.warning("No master darks were built at all, so %s will be reduced "
+                    "with no dark subtracted.", frame.get("FILENAME"))
         return None, None
+
+    strictest = ranked_keylists[0]
 
     for rank, keylist in enumerate(ranked_keylists):
         ind, matched_dark = find_matching_master(frame, master_darks, keylist)
         if matched_dark is None:
             continue
 
+        if rank > 0:
+            given_up = [k for k in strictest if k not in keylist]
+            differs = ", ".join(
+                f"{k} {frame.get(k)!r} vs {matched_dark.get(k)!r}"
+                for k in given_up if frame.get(k) != matched_dark.get(k))
+            log.warning(
+                "LOOSE DARK MATCH for %s: nothing matched on %s, so it fell "
+                "back to matching on %s only (rung %d of %d), giving up %s. "
+                "Mismatched: %s. This matters because %s.",
+                frame.get("FILENAME"), ", ".join(strictest),
+                ", ".join(keylist), rank + 1, len(ranked_keylists),
+                ", ".join(given_up), differs or "nothing in the header",
+                _dark_relaxation_cost(given_up) or "the readout differs")
+
         # for looser matches, rescale by coadds
         if "COADDS" not in keylist:
-            log.warning("Rescaling dark frame by COADDS %s -> %s",
-                        matched_dark["COADDS"], frame["COADDS"])
+            log.warning("Rescaling the dark for %s by COADDS %s -> %s. Dark "
+                        "current scales with coadds, but read noise does not, "
+                        "so the rescaled pedestal is only approximate.",
+                        frame.get("FILENAME"), matched_dark["COADDS"],
+                        frame["COADDS"])
             data = (matched_dark.data / matched_dark["COADDS"]
                     * frame["COADDS"])
             matched_dark = Frame(data, matched_dark.header.copy())
@@ -284,18 +319,37 @@ def find_closest_dark(frame, master_darks, ranked_keylists=None):
         # loosest match may not even be the same size
         if matched_dark.shape != frame.shape:
             if image_is_larger(matched_dark.data, frame.data):
+                log.warning("Trimming a %s dark to fit the %s frame %s. "
+                            "Per-pixel dark current crops correctly, but the "
+                            "subarray clocks out faster than the full frame, "
+                            "so its bias structure is not this dark's.",
+                            matched_dark.shape, frame.shape,
+                            frame.get("FILENAME"))
                 cropped, _, _ = crop(matched_dark.data, frame.shape)
                 matched_dark = Frame(cropped, matched_dark.header.copy())
             else:
-                log.warning("Dark frame is smaller than the target frame, "
-                            "not cropping: %s", frame.get("FILENAME"))
+                log.warning("The only dark matching %s is SMALLER than the "
+                            "frame (%s vs %s) and cannot be grown, so the "
+                            "frame will be reduced with no dark subtracted.",
+                            frame.get("FILENAME"), matched_dark.shape,
+                            frame.shape)
                 return None, None
 
         return ind, matched_dark
 
-    log.warning("No matching dark found for %s, %s, %s, %s",
-                frame.get("FILENAME"), frame.get("FILTER"),
-                frame.get("ITIME"), frame.get("COADDS"))
+    wanted = ", ".join(f"{k}={frame.get(k)!r}" for k in strictest
+                       if k in frame.header)
+    available = sorted({", ".join(f"{k}={d.get(k)!r}"
+                                  for k in ("ITIME", "COADDS", "SAMPMODE")
+                                  if k in d.header)
+                        for d in master_darks}) or ["none at all"]
+    log.warning(
+        "NO DARK AT ALL for %s, not even at the loosest rung (%s). Needed %s; "
+        "available darks: %s. The frame will be reduced with nothing "
+        "subtracted, so it keeps its dark current and bias -- check DARKSUB in "
+        "the header of anything built from it, and take matching darks if you "
+        "can.", frame.get("FILENAME"), ", ".join(ranked_keylists[-1]), wanted,
+        "; ".join(available))
     return None, None
 
 

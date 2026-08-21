@@ -69,7 +69,7 @@ class PolarimetryData(ABC):
     name = "abstract"
     plate_scale = None  # arcsec / pixel
 
-    # Which flat type each band requires, e.g. {"Lp": "SKY", "H": "LAMP"},
+    # Which flat type each band requires, e.g. {"Lp": "SKY", "H": "DOME"},
     # and the fallback for bands not listed. Which flat a band needs is a
     # property of the instrument and its bands, so it belongs here rather
     # than in the generic reduction code; pass it to reduce_frame and

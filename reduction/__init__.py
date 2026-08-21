@@ -4,7 +4,6 @@ specifics come in through ``instruments``; low-level helpers live in
 ``utils``."""
 
 from .masters import (
-    make_lamp_flats,
     make_master_darks,
     make_master_flats,
     make_master_masks,
@@ -85,7 +84,6 @@ __all__ = [
     "local_interpolate_bad_pixels",
     "local_median_replace_bad_pixels",
     "make_flats",
-    "make_lamp_flats",
     "make_master_darks",
     "make_master_flats",
     "make_master_masks",

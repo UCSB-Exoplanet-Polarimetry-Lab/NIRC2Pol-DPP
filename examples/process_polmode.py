@@ -154,16 +154,17 @@ sorted_files = instrument.sort_frames(raw_files)
 # --- 2. master darks / flats / skies --------------------------------------
 # instrument= supplies the detector mask, how to spot a polarimetric
 # (critical-angle) flat set, and which flat type each band requires. Pass
-# any of them explicitly to override.
+# any of them explicitly to override. Flats come in two kinds -- dome and
+# sky -- and each is split into polarimetric and not, so this can build up
+# to four masters per filter.
 darks = load_frames(sorted_files["darks"], rejects=rejects)
 master_darks, dark_masks = make_master_darks(darks, instrument=instrument)
 if master_darks:
     save_frames(paths.darks_file, master_darks)
 
 master_flats, flat_masks = make_master_flats(
-    load_frames(sorted_files["flats"], rejects=rejects),
+    load_frames(sorted_files["flats_dome"], rejects=rejects),
     load_frames(sorted_files["flats_sky"], rejects=rejects),
-    load_frames(sorted_files["flats_lampon"], rejects=rejects),
     master_darks,
     instrument=instrument,
 )
