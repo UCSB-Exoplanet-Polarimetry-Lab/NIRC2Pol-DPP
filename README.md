@@ -19,9 +19,65 @@ Coming soon!
 
 ## Installation
 
-The NIRC2-Pol DPP requires Python ≥ 3.11 with `numpy`, `scipy`, `astropy`, and `pyklip`.
+Python ≥ 3.11 (the pipeline reads its configuration with `tomllib`), plus
+`numpy`, `scipy`, `astropy`, `scikit-image` and `pyklip`.
 
-Further instructions coming soon!
+The conda route builds the environment and installs the pipeline into it:
+
+```
+conda env create -f environment.yml
+conda activate nirc2p
+```
+
+Or install into an environment you already have, from a checkout:
+
+```
+pip install -e .
+```
+
+...or straight from GitHub, without one:
+
+```
+pip install git+https://github.com/UCSB-Exoplanet-Polarimetry-Lab/NIRC2Pol-DPP.git
+```
+
+Either way `import nirc2pol` then works from any directory, so a notebook does
+not have to live in the repository or edit `sys.path` to find it:
+
+```python
+from nirc2pol.reduction.config import ReductionConfig
+from nirc2pol.polarimetry import build_stokes_cubes, radial_stokes
+from nirc2pol.instruments.nirc2 import NIRC2PolarimetryData
+```
+
+## Running a reduction
+
+Every choice a reduction makes lives in one TOML file. Write a fresh one,
+listing every option with its default and its allowed values:
+
+```
+nirc2pol-reduce --template > my_night.toml
+```
+
+Edit it -- at minimum `observations_root`, `date` and `target` -- then run it:
+
+```
+nirc2pol-reduce my_night.toml
+```
+
+The same reduction is one call from a notebook, which returns everything it
+built so you can look at any of it:
+
+```python
+from nirc2pol.reduction.config import ReductionConfig
+from nirc2pol.polmode import run
+
+products = run(ReductionConfig.from_toml("my_night.toml"))
+products["median_cube"].shape
+```
+
+`examples/tutorial.ipynb` walks through the same steps individually, on a
+small dataset bundled with the repository, and explains what each one is for.
 
 ## Contributions / Questions
 
