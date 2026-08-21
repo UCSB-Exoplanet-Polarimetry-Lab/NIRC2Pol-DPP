@@ -140,28 +140,6 @@ def subtract_ip(Q, U, I, ip, I_u=None):
     return Q - ip.ipq * I, U - ip.ipu * (I if I_u is None else I_u)
 
 
-def _annulus(shape, r_inner, r_outer, center=None):
-    """Annulus mask, wrapping :func:`utils.imutils.make_annulus_mask`.
-
-    Parameters
-    ----------
-    shape : tuple of int
-        ``(ny, nx)``.
-    r_inner, r_outer : float
-        Radii in pixels.
-    center : tuple of float, optional
-        ``(cy, cx)``; defaults to the image centre.
-
-    Returns
-    -------
-    ndarray of bool
-        True inside the annulus.
-    """
-    from utils.imutils import make_annulus_mask
-
-    return make_annulus_mask(shape, r_inner, r_outer, center=center)
-
-
 def _uphi_fit_terms(instrument, cycle, fast_axis_offset, mask_radius,
                     crop_size, critical_angles, atol, register_method,
                     derotate):

@@ -140,7 +140,7 @@ def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
         If no frame in the cycle sits at this angle.
     """
 
-    from .instpol import _annulus
+    from utils.imutils import make_annulus_mask
 
     diffs, sums = [], []
     for frame in cycle:
@@ -152,7 +152,7 @@ def _mean_frame_at_angle(instrument, cycle, angle, atol, register_method,
             d, s = single_difference(stack)
             if ip_frame_annulus is not None:
                 ratio = normalized_single_difference(
-                    stack, _annulus(s.shape, *ip_frame_annulus))
+                    stack, make_annulus_mask(s.shape, *ip_frame_annulus))
                 d = d - ratio * s
             diffs.append(d)
             sums.append(s)
