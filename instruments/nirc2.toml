@@ -1,0 +1,79 @@
+# NIRC2 instrument constants for NIRC2Pol-DPP.
+#
+# Everything in this file is a measured or documented property of the
+# instrument itself, never a choice about how to reduce a particular dataset.
+# Reduction choices live in a reduction config; per-dataset settings stay on
+# the instrument instance/subclass. The test for whether something belongs
+# here: would two people reducing different targets on the same night both
+# want the same value? If yes, it is an instrument constant.
+#
+# TOML, so values arrive as the types they are -- floats, integers, arrays and
+# dates -- with no casting at the call site.
+
+[instrument]
+name           = "NIRC2"
+plate_scale    = 0.009942   # arcsec / pixel, narrow camera
+zp_offset      = -0.262     # deg, narrow camera zero point, Service et al. 2016
+flat_elevation = 45.0       # deg, the elevation the dome flat position sits at
+
+[observatory]
+# Keck II, for parallactic and north angle calculations
+latitude  = 19.82525
+longitude = -155.468889
+
+[polarimetry]
+modulator_keyword      = "PCUPR"
+rotator_keyword        = "ROTPDEST"
+modulator_cycle_length = 4
+critical_angles        = [0.0, 45.0, 22.5, 67.5]
+# Frames before this date carry no PCUPR keyword and the HWP angle has to be
+# recovered from OBJECT.
+pol_header_epoch       = 2025-12-01
+
+[detector]
+# The NIRC2 detector was replaced on this date; gain and saturation differ
+# either side of it.
+swap_date            = 2023-11-20
+gain_before          = 4.0
+gain_after           = 8.0
+saturation_before    = 9000.0
+saturation_after     = 4500.0
+readnoise_sampmode_2 = 50.0  # not currently used, kept for error propagation
+readnoise_sampmode_3 = 15.0  # not currently used, kept for error propagation
+
+[background]
+# Recommended background methods per band, best first
+Lp = ["dither", "mean_box"]
+L  = ["dither", "mean_box"]
+J  = ["annulus", "mean_box"]
+H  = ["annulus", "mean_box"]
+K  = ["annulus", "mean_box"]
+Kp = ["annulus", "mean_box"]
+Ks = ["annulus", "mean_box"]
+
+[flat_type]
+# Which kind of flat each band requires, unless overridden: DOME (the dome
+# screen, lamp on or off) or SKY (twilight). A band not listed falls back to
+# default_flat_type. Whether a flat is polarimetric is a separate property
+# (POLFLAT, set by the HWP angle) and applies to either kind.
+default_flat_type = "DOME"
+Lp = "SKY"
+L  = "SKY"
+J  = "DOME"
+H  = "DOME"
+K  = "DOME"
+Kp = "DOME"
+Ks = "DOME"
+
+# ---------------------------------------------------------------------------
+# Beam extraction geometry.
+#
+# The Wollaston puts two beams on the detector, and it is currently unknown
+# whether their separation is constant between epochs. The separation itself
+# is NOT recorded here: it is measured from the data every time by
+# reduction.fit_beam_geometry. These are only where that search starts, from
+# prior reductions and tests.
+
+[beam_geometry]
+search_top_row_start = 500
+search_beam_x_offset = 12

@@ -12,7 +12,6 @@ methods.
 
 from __future__ import annotations
 
-from configparser import ConfigParser
 import logging
 
 from reduction.sky import subtract_background
@@ -27,13 +26,16 @@ def read_config(path):
 
     Parameters
     ----------
-    path : str, optional
-        Path to the ``.ini``.
+    path : str
+        Path to the ``.toml``.
 
     Returns
     -------
-    ConfigParser
-        The parsed file, with option names case-preserved.
+    dict
+        The parsed file: nested dicts of real types. TOML gives floats,
+        integers, arrays and dates directly, so nothing needs casting at the
+        call site, and keys keep their case -- which matters here, because
+        band names are keys and ``Lp`` must not collide with ``L``.
 
     Raises
     ------
@@ -41,27 +43,18 @@ def read_config(path):
         If the file is missing. The constants are not optional, and silently
         falling back to hardcoded values would defeat the point of having
         them in one auditable place.
-
-    Notes
-    -----
-    ``optionxform`` is overridden so option names keep their case. Band names
-    are option names here, and ConfigParser lowercases them by default, which
-    would make ``Lp`` and ``L`` collide with each other and stop matching what
-    :func:`band_of` returns.
     """
-    parser = ConfigParser(inline_comment_prefixes=(";",))
-    parser.optionxform = str
-    if not parser.read(path):
-        raise FileNotFoundError(
-            f"Instrument constants not found at {path}. This file "
-            "holds the plate scale, detector epochs and beam geometry, so "
-            "the module cannot be used without it.")
-    return parser
+    import tomllib
 
-def config_csv(config_obj, section, option, cast=str):
-    """One comma-separated option as a tuple. A helper to read_config that takes the parser returned by read_config."""
-    return tuple(cast(v.strip())
-                 for v in config_obj.get(section, option).split(","))
+    try:
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Instrument constants not found at {path}. This file holds the "
+            "plate scale, detector epochs and beam geometry, so the module "
+            "cannot be used without it.") from None
+
 
 class PolarimetryData(ABC):
     """Everything instrument-specific the pipeline needs, in one object."""

@@ -12,10 +12,9 @@ from __future__ import annotations
 import logging
 import os
 import re
-from configparser import ConfigParser
 from dataclasses import dataclass, field
 from datetime import date as _date
-from instruments.base import read_config, config_csv
+from instruments.base import read_config
 from utils.angles import (par_angle, sexagesimal_to_degrees,
                           small_angle_distance)
 from utils.frame import Frame, parse_date_obs
@@ -25,21 +24,22 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 CONFIG_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "nirc2.ini")
+    os.path.dirname(os.path.abspath(__file__)), "nirc2.toml")
 
 _CONFIG = read_config(CONFIG_PATH)
 
-PLATE_SCALE = _CONFIG.getfloat("instrument", "plate_scale")
+PLATE_SCALE = _CONFIG["instrument"]["plate_scale"]
 
 # Keck observatory
-OBSERVATORY_LAT = _CONFIG.getfloat("observatory", "latitude")
-OBSERVATORY_LON = _CONFIG.getfloat("observatory", "longitude")
+OBSERVATORY_LAT = _CONFIG["observatory"]["latitude"]
+OBSERVATORY_LON = _CONFIG["observatory"]["longitude"]
 
 # Which flat type each band requires, and the fallback for unlisted bands.
-DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG.get("flat_type", "default_flat_type").strip().upper()
+DEFAULT_REQUIRED_FLAT_TYPE = _CONFIG["flat_type"]["default_flat_type"].strip().upper()
 REQUIRED_FLAT_TYPE_BY_BAND = {
-    band: _CONFIG.get("flat_type", band).strip().upper()
-    for band in _CONFIG["flat_type"] if band != "default_flat_type"}
+    band: value.strip().upper()
+    for band, value in _CONFIG["flat_type"].items()
+    if band != "default_flat_type"}
 
 REQUIRED_HEADER_KEYWORDS = [
     "FILENAME", "FILTER", "ITIME", "COADDS", "NAXIS1", "NAXIS2",
@@ -53,8 +53,7 @@ _DEFAULT_BAD_PIXEL_MASK = os.path.join(
 # the detector was replaced in late 2023, changing gain. 
 # no data for pol mode should be from before this date, but we have the safeguard there just in case someone wants to use the basic
 # functions in the DPP to analyze older data.
-_DETECTOR_SWAP_DATE = _date.fromisoformat(
-    _CONFIG.get("detector", "swap_date"))
+_DETECTOR_SWAP_DATE = _CONFIG["detector"]["swap_date"]
 
 # The polarimetry header keywords (PCUPR / PCUNAME, the HWP position) were
 # only added to the NIRC2 headers around 2025-12-01. Earlier polarimetry
@@ -62,8 +61,7 @@ _DETECTOR_SWAP_DATE = _date.fromisoformat(
 # "h_hwp_modulation_hwp_40.0" or "pol_cal_imr_hwp_h_imr_0.0_hwp_90.0".
 # The pipeline reads those as a fallback but warns, because other
 # polarimetric keywords may be missing too.
-POL_HEADER_EPOCH = _date.fromisoformat(
-    _CONFIG.get("polarimetry", "pol_header_epoch"))
+POL_HEADER_EPOCH = _CONFIG["polarimetry"]["pol_header_epoch"]
 
 def predates_pol_headers(header):
     """True if a frame was taken before the polarimetry header keywords
@@ -105,23 +103,23 @@ def check_pol_headers(header, strict=False):
 def get_gain(date_obs):
     """Detector gain in photoelectrons per ADU, either side of the swap."""
     before = parse_date_obs(date_obs) < _DETECTOR_SWAP_DATE
-    return _CONFIG.getfloat("detector",
-                            "gain_before" if before else "gain_after")
+    return _CONFIG["detector"]["gain_before" if before else "gain_after"]
 
 
 def get_readnoise(sampmode):
     """Read noise in photoelectrons, by sampling mode."""
+    detector = _CONFIG["detector"]
     option = f"readnoise_sampmode_{sampmode}"
-    if not _CONFIG.has_option("detector", option):
+    if option not in detector:
         option = "readnoise_default"
-    return _CONFIG.getfloat("detector", option)
+    return detector[option]
 
 
 def get_saturation_limit(date_obs):
     """Saturation / linearity limit in ADU, either side of the swap."""
     before = parse_date_obs(date_obs) < _DETECTOR_SWAP_DATE
-    return _CONFIG.getfloat(
-        "detector", "saturation_before" if before else "saturation_after")
+    return _CONFIG["detector"][
+        "saturation_before" if before else "saturation_after"]
 
 
 def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
@@ -151,7 +149,7 @@ def load_bad_pixel_mask(path=_DEFAULT_BAD_PIXEL_MASK):
 #
 
 # deg; dome flats are always taken at this elevation
-FLAT_ELEVATION = _CONFIG.getfloat("instrument", "flat_elevation")
+FLAT_ELEVATION = _CONFIG["instrument"]["flat_elevation"]
 
 
 def _at_flat_position(frame, arcsec_threshold):
@@ -278,7 +276,7 @@ def sort_frames(filenames, min_flat_counts=100.0, arcsec_threshold=100.0):
 
 
 # deg, narrow camera zero point from Service et al. 2016
-ZP_OFFSET = _CONFIG.getfloat("instrument", "zp_offset")
+ZP_OFFSET = _CONFIG["instrument"]["zp_offset"]
 
 
 def calculate_north_angle(header):
@@ -418,27 +416,27 @@ class NIRC2PolarimetryData(PolarimetryData):
     angles (0, 45, 22.5, 67.5 deg).
     """
 
-    name = "NIRC2"
+    name = _CONFIG["instrument"]["name"]
     plate_scale = PLATE_SCALE
     required_flat_types = REQUIRED_FLAT_TYPE_BY_BAND
     default_required_flat_type = DEFAULT_REQUIRED_FLAT_TYPE
 
     # HWP angle lives in PCUPR (the PCU rotation stage holding the HWP;
     # PCUNAME gives the named PCU position)
-    modulator_keyword = "PCUPR"
+    modulator_keyword = _CONFIG["polarimetry"]["modulator_keyword"]
 
     # PCUNAME names the PCU stage position: the HWP is in the beam at
     # hwp_center, and out of it parked at home or pointed at the telescope.
     modulator_name_keyword = "PCUNAME"
     modulator_in_names = ("hwp_center",)
     modulator_out_names = ("home", "telescope")
-    modulator_cycle_length = 4
-    critical_angles = (0.0, 45.0, 22.5, 67.5)
+    modulator_cycle_length = _CONFIG["polarimetry"]["modulator_cycle_length"]
+    critical_angles = tuple(_CONFIG["polarimetry"]["critical_angles"])
 
     # image rotator keyword used in the polarimetric rotation model; note
     # ROTPDEST is 2x the physical rotator-to-bench angle (OBRT), so it
     # enters the model with a factor 2, not 4
-    rotator_keyword = "ROTPDEST"
+    rotator_keyword = _CONFIG["polarimetry"]["rotator_keyword"]
 
     # Beam extraction geometry (detector rows/columns). Measured from the
     # data by :func:`reduction.fit_beam_geometry` and assigned before
@@ -447,9 +445,8 @@ class NIRC2PolarimetryData(PolarimetryData):
 
     # Where reduction.fit_beam_geometry starts looking. Not a value to
     # reduce with: the geometry is measured from the data every time.
-    beam_geometry_search = (
-        _CONFIG.getint("beam_geometry", "search_top_row_start"),
-        _CONFIG.getint("beam_geometry", "search_beam_x_offset"))
+    beam_geometry_search = (_CONFIG["beam_geometry"]["search_top_row_start"],
+                            _CONFIG["beam_geometry"]["search_beam_x_offset"])
 
     def beam_geometry_seed(self):
         """Starting point for the beam geometry search, as ``(top, xoff)``."""
@@ -722,8 +719,8 @@ class NIRC2PolarimetryData(PolarimetryData):
 
 
 # Recommended background treatment per band (see PolarimetryData).
-RECOMMENDED_BACKGROUND = {band: config_csv(_CONFIG, "background", band)
-                          for band in _CONFIG["background"]}
+RECOMMENDED_BACKGROUND = {band: tuple(methods)
+                          for band, methods in _CONFIG["background"].items()}
 
 
 def check_background_choice(band, method):
