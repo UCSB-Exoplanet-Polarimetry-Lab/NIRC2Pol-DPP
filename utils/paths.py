@@ -34,10 +34,19 @@ class ObslogPaths:
     observations folder and a date; every other path is derived, so a
     reduction script names the night once.
 
+    The layout is two levels deep -- the root holds one folder per night, and
+    the frames sit inside that, not in the root itself::
+
+        /data/nirc2pol/          <- observations_folder
+          2025-12-08/            <- date
+            raw/  *.fits         <- raw frames
+            reduced/ sequences/  <- written by the reduction
+
     Parameters
     ----------
     observations_folder : str
-        Root folder holding one subfolder per night.
+        Root folder holding one subfolder per night. Not the folder the FITS
+        files themselves are in; see the tree above.
     date : str
         Night identifier, used as the subfolder name (e.g. ``"2026-06-05"``).
 

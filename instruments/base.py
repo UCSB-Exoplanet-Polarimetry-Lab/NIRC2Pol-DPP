@@ -84,6 +84,20 @@ class PolarimetryData(ABC):
     # number of modulator positions in one complete cycle
     modulator_cycle_length = 4
 
+    # header keyword naming the target. Frames of different targets are never
+    # one modulator cycle, however well their angles happen to line up across
+    # the boundary, so match_modulator_cycles breaks on a change here.
+    target_keyword = "TARGNAME"
+
+    # header keyword naming where the modulator is parked, and the values
+    # meaning it sits in the beam or out of it. Flats need this: one taken
+    # with the modulator removed is an ordinary flat, while one taken with it
+    # in the beam carries its transmission and is only usable as part of a
+    # complete modulation cycle.
+    modulator_name_keyword = None
+    modulator_in_names = ()
+    modulator_out_names = ()
+
     # the modulator's critical angles [deg], ordered (Q+, Q-, U+, U-)
     critical_angles = (0.0, 45.0, 22.5, 67.5)
 
@@ -279,6 +293,34 @@ class PolarimetryData(ABC):
     # override)
     #
 
+    def modulator_in_beam(self, frame):
+        """Was the modulator in the beam when this frame was taken?
+
+        Parameters
+        ----------
+        frame : Frame
+            Frame to test.
+
+        Returns
+        -------
+        bool or None
+            True in the beam, False parked out of it, and None when the header
+            does not say -- data predating the keyword, or a position named by
+            neither list. None means *unknown*, not "out": callers must not
+            treat it as a licence to use the frame as an ordinary flat.
+        """
+        if not self.modulator_name_keyword:
+            return None
+        name = frame.get(self.modulator_name_keyword)
+        if name is None:
+            return None
+        name = str(name).strip().lower()
+        if name in {str(n).strip().lower() for n in self.modulator_in_names}:
+            return True
+        if name in {str(n).strip().lower() for n in self.modulator_out_names}:
+            return False
+        return None
+
     def match_modulator_cycles(self, frames, atol=0.1):
         """Group a time-ordered list of frames into complete modulator
         cycles of ``modulator_cycle_length`` distinct positions.
@@ -289,6 +331,14 @@ class PolarimetryData(ABC):
         with a warning. Repeats at the same position within a cycle are kept
         (a cycle is a list of frames, one entry per exposure).
 
+        A change of target also ends the group in progress. Without that, a
+        pointing ending mid-cycle at, say, 0 and 45 followed by a slew to
+        another object starting at 22.5 and 67.5 presents four distinct angles
+        in a row and would be accepted as one cycle -- a double difference
+        between two objects. Selecting the frames you mean to reduce
+        (:func:`utils.frame.select_frames`) is the real answer; this is the
+        guard for when that has not been done.
+
         Returns a list of cycles; each cycle is a list of frames ordered as
         observed. The frame -> cycle mapping is recorded in each frame's
         POLCYCLE header keyword.
@@ -298,21 +348,37 @@ class PolarimetryData(ABC):
         cycles = []
         current = []
         current_angles = []
+        current_target = None
         discarded = 0
 
         for frame in frames:
             angle = self.modulator_angle(frame)
             seen = any(angles_match(angle, a, atol) for a in current_angles)
 
+            target = frame.get(self.target_keyword) if self.target_keyword \
+                else None
+            changed_target = bool(current) and target != current_target
+
             # A repeat before the cycle is complete means the sequence was
             # interrupted (an aborted cycle, or extra frames at the end of a
-            # pointing). Those frames belong to no complete cycle: drop the
-            # partial group rather than letting it absorb frames from the
-            # next pointing.
-            if seen:
+            # pointing). A change of target means the telescope moved. Either
+            # way those frames belong to no complete cycle: drop the partial
+            # group rather than letting it absorb frames from the next
+            # pointing.
+            if changed_target:
+                log.warning(
+                    "Target changed from %r to %r partway through a modulator "
+                    "cycle, so the %d frame(s) already accumulated are "
+                    "dropped. They cannot be combined with frames of a "
+                    "different object.",
+                    current_target, target, len(current))
+            if seen or changed_target:
                 discarded += len(current)
                 current = []
                 current_angles = []
+
+            if not current:
+                current_target = target
 
             current.append(frame)
             current_angles.append(angle)

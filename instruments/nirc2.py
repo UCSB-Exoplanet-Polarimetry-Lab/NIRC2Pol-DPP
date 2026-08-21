@@ -426,6 +426,12 @@ class NIRC2PolarimetryData(PolarimetryData):
     # HWP angle lives in PCUPR (the PCU rotation stage holding the HWP;
     # PCUNAME gives the named PCU position)
     modulator_keyword = "PCUPR"
+
+    # PCUNAME names the PCU stage position: the HWP is in the beam at
+    # hwp_center, and out of it parked at home or pointed at the telescope.
+    modulator_name_keyword = "PCUNAME"
+    modulator_in_names = ("hwp_center",)
+    modulator_out_names = ("home", "telescope")
     modulator_cycle_length = 4
     critical_angles = (0.0, 45.0, 22.5, 67.5)
 

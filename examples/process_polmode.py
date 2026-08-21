@@ -50,18 +50,40 @@ from reduction import (fit_beam_geometry, make_master_darks,
                        make_master_flats,
                        make_master_masks, make_master_skies, reduce_frame)
 from utils import (ObslogPaths, load_frames, load_rejects, save_frames,
-                   start_reduction_log)
+                   select_frames, start_reduction_log)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("process_polmode")
 
 # ---------------------------------------------------------------------------
 # configuration
-OBSERVATIONS_FOLDER = "/path/to/data_polmode"  # contains <date>/raw/*.fits
+# Root folder holding ONE SUBFOLDER PER NIGHT -- not the folder your FITS
+# files are in. For DATE below, frames are read from <ROOT>/<DATE>/raw/:
+#
+#     /data/nirc2pol/          <- OBSERVATIONS_ROOT
+#       2025-12-08/            <- DATE
+#         raw/  *.fits         <- your raw frames go here
+#         reduced/ sequences/  <- written by this script
+#
+OBSERVATIONS_ROOT = "/path/to/data_polmode"
 # UTC, as DATE-OBS records it. A Keck night runs 04:00-16:00 UTC, so one
 # UTC date names a whole night -- one day after the HST evening.
 DATE = "2025-12-08"
+
+# TARGET only names the output files. What this reduction actually covers is
+# set by SELECT_* below.
 TARGET = "AB_Aur"
+
+# Which frames become science products. Darks, flats and reduced frames are
+# built for the whole night regardless; this narrows what goes on to HWP
+# cycle matching and the Stokes products, which is where you want only the
+# frames you trust. None means "no constraint".
+#   SELECT_FRAME_RANGE = (932, 939)   inclusive, by the number in the filename
+#   SELECT_TARGET      = "AB Aur"     matched ignoring case, spaces and _ / -
+# For frames that are simply bad, prefer the reject file -- it keeps a reason
+# and applies to every run of the night. See the note by load_rejects below.
+SELECT_FRAME_RANGE = None
+SELECT_TARGET = None
 
 # Background, applied per Wollaston beam inside build_stokes_cubes. The band
 # decides what is sensible and nirc2.check_background_choice warns if this is
@@ -126,8 +148,12 @@ class NightPolData(nirc2.NIRC2PolarimetryData):
 
 
 instrument = NightPolData()
-paths = ObslogPaths(OBSERVATIONS_FOLDER, DATE)
+paths = ObslogPaths(OBSERVATIONS_ROOT, DATE)
 paths.make_folders()
+# Frames excluded from every run of this night, each with a reason. Add one
+# with:
+#     from utils.paths import record_reject
+#     record_reject(paths.rejects_file, "n0937.fits", "open AO loop")
 rejects = load_rejects(paths.rejects_file)
 
 # Everything the reduction reports -- which flat it matched, whether the band
@@ -203,6 +229,13 @@ for frame in sci_frames:
     )
     reduced.save(os.path.join(paths.reduced_folder, reduced["RED-FN"]))
     reduced_frames.append(reduced)
+
+# --- 3b. choose the frames this reduction covers --------------------------
+# Everything above ran on the whole night. From here on it is just the frames
+# selected, so the Stokes products are built from those alone. The choice is
+# logged, so the reduction log records which frames the products came from.
+reduced_frames = select_frames(reduced_frames, target=SELECT_TARGET,
+                               frame_range=SELECT_FRAME_RANGE)
 
 # --- 4. HWP cycle matching ------------------------------------------------
 # Measure where the two beams sit, from these frames. The separation moves

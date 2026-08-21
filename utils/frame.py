@@ -15,6 +15,7 @@ convention: ``data[y, x]``, i.e. axis 0 is NAXIS2 (rows) and axis 1 is NAXIS1
 from __future__ import annotations
 
 import os
+import re
 
 import logging
 from datetime import date as _date
@@ -252,6 +253,100 @@ def load_frames(frame_paths, rejects=()):
             continue
         frames.append(Frame.load(fn))
     return frames
+
+
+def frame_number(path_or_frame):
+    """Observation number from a frame's filename, e.g. ``n0932.fits.gz`` -> 932.
+
+    Parameters
+    ----------
+    path_or_frame : str or Frame
+        A path, or a Frame carrying ``FILENAME``.
+
+    Returns
+    -------
+    int or None
+        The first run of digits in the basename, or None if there is none.
+    """
+    if hasattr(path_or_frame, "header"):
+        name = str(path_or_frame.get("FILENAME") or "")
+    else:
+        name = str(path_or_frame)
+    match = re.search(r"(\d+)", os.path.basename(name))
+    return int(match.group(1)) if match else None
+
+
+def _normalize_target(name):
+    """Fold a target name for comparison: case, spaces, underscores, hyphens.
+
+    ``"AB_Aur"``, ``"AB Aur"`` and ``"ab-aur"`` all become ``"abaur"``, so a
+    label written one way in a script finds a header written another way.
+    """
+    return re.sub(r"[\s_\-]+", "", str(name)).lower()
+
+
+def select_frames(frames, target=None, frame_range=None,
+                  target_keyword="TARGNAME"):
+    """Narrow a list of frames to the ones a reduction should cover.
+
+    This is about *scope*, not quality: masters and reduced frames are built
+    for a whole night, and this picks the subset that goes on to become
+    science products. Frames that are simply *bad* belong in the reject file
+    instead, where they carry a reason and persist across runs -- see
+    :func:`utils.paths.record_reject`.
+
+    Parameters
+    ----------
+    frames : list of Frame
+        Frames to choose from.
+    target : str, optional
+        Keep frames whose target matches, compared with separators and case
+        folded away, so ``"AB_Aur"`` matches a header reading ``"AB Aur"``.
+        Matched as a substring, so it also works against ``target_keyword=
+        "OBJECT"`` when OBJECT carries more than the name.
+    frame_range : tuple of int, optional
+        Inclusive ``(first, last)`` observation numbers, read from the
+        filenames -- ``(932, 939)`` keeps n0932 through n0939. This is how an
+        obslog refers to a night.
+    target_keyword : str, optional
+        Header keyword holding the target name.
+
+    Returns
+    -------
+    list of Frame
+        The frames that matched every criterion given, in the order supplied.
+        Criteria combine with AND, and ``None`` means no constraint, so
+        calling with nothing returns the list unchanged.
+    """
+    criteria = []
+    kept = list(frames)
+
+    if target is not None:
+        wanted = _normalize_target(target)
+        kept = [f for f in kept
+                if wanted in _normalize_target(f.get(target_keyword) or "")]
+        criteria.append(f"{target_keyword} matching {target!r}")
+
+    if frame_range is not None:
+        first, last = frame_range
+        numbered = [(f, frame_number(f)) for f in kept]
+        unnumbered = [f for f, n in numbered if n is None]
+        if unnumbered:
+            log.warning("%d frames have no number in their filename and "
+                        "cannot be selected by frame_range; they are dropped.",
+                        len(unnumbered))
+        kept = [f for f, n in numbered if n is not None and first <= n <= last]
+        criteria.append(f"frames {first}-{last}")
+
+    if criteria:
+        log.info("Selected %d of %d frames by %s", len(kept), len(frames),
+                 " and ".join(criteria))
+        if not kept:
+            log.warning("Selection left NO frames. Check the criteria "
+                        "against the night's frame table -- nothing "
+                        "downstream will have anything to work on.")
+
+    return kept
 
 
 def save_frames(filename, frames, overwrite=True):
