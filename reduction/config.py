@@ -75,6 +75,16 @@ class ReductionConfig:
         "Keep only frames whose TARGNAME matches, ignoring case, spaces, "
         "underscores and hyphens. none keeps everything.",
         "selection")
+    raw_range: list = _f(
+        None,
+        "Which raw files to consider at all, as inclusive observation numbers "
+        "read from the filenames -- one range [857, 993] or several. This is "
+        "not the same question as select_frame_range: raw_range decides what "
+        "is read off disk and sorted into darks, flats and science, so it has "
+        "to be wide enough to include the calibrations. none reads every raw "
+        "file in the night folder, which is what you want unless the folder "
+        "holds more than one night's worth.",
+        "selection")
     select_frame_range: list = _f(
         None,
         "Keep only these observation numbers, read from the filenames. One "
@@ -251,12 +261,41 @@ class ReductionConfig:
         """Every option and its value, for the reduction log."""
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
+    def to_toml(self, path):
+        """Write this config to ``path`` as TOML, and return the path.
+
+        The counterpart to :meth:`from_toml`, and it round-trips: reading back
+        what this writes gives an equal config.
+
+        Its reason for existing is provenance. A config built inline -- in a
+        notebook, say -- exists only in memory, so a reduction log can record
+        the *values* but has nothing to point at, and nobody can re-run it
+        from the log alone. Writing it out first gives the run a real file to
+        name, which is what ``run_log.settings(config=...)`` records.
+        """
+        text = self._render({f.name: getattr(self, f.name)
+                             for f in fields(self)},
+                            header=(
+                                "# Reduction config for NIRC2Pol-DPP, written "
+                                "by ReductionConfig.to_toml.\n#\n"
+                                "# Read it back with "
+                                "ReductionConfig.from_toml(path)."))
+        with open(path, "w") as fh:
+            fh.write(text)
+        log.info("Reduction config written to %s", path)
+        return path
+
     @classmethod
     def template(cls):
         """An annotated TOML file listing every option, default and choice.
 
         Generated from the dataclass, so it cannot fall behind it.
         """
+        return cls._render({f.name: f.metadata["default"] for f in fields(cls)})
+
+    @classmethod
+    def _render(cls, values, header=None):
+        """Render ``{field: value}`` as annotated TOML, grouped by section."""
         import textwrap
 
         out = [
@@ -272,6 +311,9 @@ class ReductionConfig:
             "# instrument rather than choices about this reduction.",
             "",
         ]
+        if header is not None:
+            out = header.splitlines() + ["#", ""]
+
         groups = {}
         for f in fields(cls):
             groups.setdefault(f.metadata["group"], []).append(f)
@@ -290,8 +332,7 @@ class ReductionConfig:
                         for c in f.metadata["choices"])
                     out += ["# " + line for line in
                             textwrap.wrap("choices: " + choices, 72)]
-                out.append(
-                    f"{f.name} = {_toml_value(f.metadata['default'])}")
+                out.append(f"{f.name} = {_toml_value(values[f.name])}")
                 out.append("")
         return "\n".join(out)
 

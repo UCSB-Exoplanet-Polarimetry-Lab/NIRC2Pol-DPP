@@ -312,6 +312,24 @@ def _as_ranges(frame_range):
     return ranges
 
 
+def in_frame_range(path_or_frame, frame_range):
+    """Is this frame's observation number inside any of ``frame_range``?
+
+    The path-level counterpart to :func:`select_frames`. That one reads
+    headers, so it needs frames already loaded; this reads only the filename,
+    so it can narrow a glob *before* anything is opened -- which is what a
+    ``raw_range`` is for, when the folder holds more than you want to read.
+
+    Accepts the same shapes as ``select_frames(frame_range=...)``: one
+    ``(first, last)`` or several. A file with no number in its name is not in
+    any range.
+    """
+    n = frame_number(path_or_frame)
+    if n is None:
+        return False
+    return any(lo <= n <= hi for lo, hi in _as_ranges(frame_range))
+
+
 def select_frames(frames, target=None, frame_range=None,
                   target_keyword="TARGNAME"):
     """Narrow a list of frames to the ones a reduction should cover.

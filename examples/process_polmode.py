@@ -56,8 +56,8 @@ from reduction.config import ReductionConfig
 from reduction import (fit_beam_geometry, make_master_darks,
                        make_master_flats,
                        make_master_masks, make_master_skies, reduce_frame)
-from utils import (ObslogPaths, load_frames, load_rejects, save_frames,
-                   select_frames, start_reduction_log)
+from utils import (ObslogPaths, in_frame_range, load_frames, load_rejects,
+                   save_frames, select_frames, start_reduction_log)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("process_polmode")
@@ -110,6 +110,12 @@ if instrument.top_row_start is not None:
 # --- 1. sort raw frames by type -------------------------------------------
 # *.fits* rather than *.fits so gzipped archive frames are picked up too
 raw_files = sorted(glob.glob(os.path.join(paths.raw_folder, "*.fits*")))
+if cfg.raw_range is not None:
+    # Narrow what is read off disk at all. Distinct from select_frame_range,
+    # which picks the science frames: this has to stay wide enough to include
+    # the darks and flats, or the masters cannot be built.
+    raw_files = [f for f in raw_files if in_frame_range(f, cfg.raw_range)]
+    log.info("raw_range keeps %d raw files", len(raw_files))
 sorted_files = instrument.sort_frames(raw_files)
 
 # --- 2. master darks / flats / skies --------------------------------------
