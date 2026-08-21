@@ -23,9 +23,10 @@ from .mueller import (
 from .instpol import (
     InstrumentalPolarization,
     fit_ip_uphi,
+    fit_ip_uphi_all,
     mean_ip,
     measure_ip_annulus,
-    measure_ip_cycle,
+    measure_ip_coronagraph,
     subtract_ip,
 )
 from .fast_axis import (
@@ -58,9 +59,10 @@ __all__ = [
     "fit_empirical_cycle_correction",
     "fit_fast_axis_on_sky",
     "fit_ip_uphi",
+    "fit_ip_uphi_all",
     "mean_ip",
     "measure_ip_annulus",
-    "measure_ip_cycle",
+    "measure_ip_coronagraph",
     "median_stokes_cube",
     "normalized_single_difference",
     "polarization_products",

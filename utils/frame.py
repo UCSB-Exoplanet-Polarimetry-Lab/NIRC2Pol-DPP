@@ -285,6 +285,33 @@ def _normalize_target(name):
     return re.sub(r"[\s_\-]+", "", str(name)).lower()
 
 
+def _as_ranges(frame_range):
+    """Normalise a frame_range argument to a list of inclusive pairs.
+
+    Accepts a single ``(first, last)`` or several, ``[(857, 900), (915, 930)]``.
+    A night is often observed in runs broken by a slew or a filter change, so
+    the plural form is the common case; the singular is kept because most
+    selections are one run.
+    """
+    if frame_range is None:
+        return None
+
+    pairs = list(frame_range)
+    if pairs and isinstance(pairs[0], (int, float)):
+        pairs = [pairs]                      # a bare (first, last)
+
+    ranges = []
+    for pair in pairs:
+        first, last = pair
+        if first > last:
+            raise ValueError(
+                f"frame_range {(first, last)} runs backwards: the first frame "
+                f"number must not exceed the last. Pass several ranges as a "
+                f"list of pairs, e.g. [(857, 900), (915, 930)].")
+        ranges.append((int(first), int(last)))
+    return ranges
+
+
 def select_frames(frames, target=None, frame_range=None,
                   target_keyword="TARGNAME"):
     """Narrow a list of frames to the ones a reduction should cover.
@@ -304,10 +331,12 @@ def select_frames(frames, target=None, frame_range=None,
         folded away, so ``"AB_Aur"`` matches a header reading ``"AB Aur"``.
         Matched as a substring, so it also works against ``target_keyword=
         "OBJECT"`` when OBJECT carries more than the name.
-    frame_range : tuple of int, optional
-        Inclusive ``(first, last)`` observation numbers, read from the
-        filenames -- ``(932, 939)`` keeps n0932 through n0939. This is how an
-        obslog refers to a night.
+    frame_range : tuple of int or list of tuple, optional
+        Inclusive observation numbers, read from the filenames. Either one
+        range, ``(932, 939)``, which keeps n0932 through n0939, or several,
+        ``[(857, 900), (915, 930), (932, 963)]`` -- a night broken by a slew
+        or a filter change is several runs, and this is how an obslog refers
+        to them. A frame is kept if it falls in any of the ranges.
     target_keyword : str, optional
         Header keyword holding the target name.
 
@@ -327,16 +356,18 @@ def select_frames(frames, target=None, frame_range=None,
                 if wanted in _normalize_target(f.get(target_keyword) or "")]
         criteria.append(f"{target_keyword} matching {target!r}")
 
-    if frame_range is not None:
-        first, last = frame_range
+    ranges = _as_ranges(frame_range)
+    if ranges is not None:
         numbered = [(f, frame_number(f)) for f in kept]
         unnumbered = [f for f, n in numbered if n is None]
         if unnumbered:
             log.warning("%d frames have no number in their filename and "
                         "cannot be selected by frame_range; they are dropped.",
                         len(unnumbered))
-        kept = [f for f, n in numbered if n is not None and first <= n <= last]
-        criteria.append(f"frames {first}-{last}")
+        kept = [f for f, n in numbered
+                if n is not None and any(lo <= n <= hi for lo, hi in ranges)]
+        criteria.append("frames "
+                        + ", ".join(f"{lo}-{hi}" for lo, hi in ranges))
 
     if criteria:
         log.info("Selected %d of %d frames by %s", len(kept), len(frames),

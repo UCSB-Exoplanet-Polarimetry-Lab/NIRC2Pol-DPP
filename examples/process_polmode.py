@@ -44,7 +44,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from instruments import nirc2
-from polarimetry import (ProductWriter, build_stokes_cubes,
+from polarimetry import (ProductWriter, build_stokes_cubes, fit_ip_uphi,
+                         fit_ip_uphi_all, mean_ip,
                          fit_fast_axis_on_sky, median_stokes_cube)
 from reduction import (fit_beam_geometry, make_master_darks,
                        make_master_flats,
@@ -79,6 +80,7 @@ TARGET = "AB_Aur"
 # cycle matching and the Stokes products, which is where you want only the
 # frames you trust. None means "no constraint".
 #   SELECT_FRAME_RANGE = (932, 939)   inclusive, by the number in the filename
+#   SELECT_FRAME_RANGE = [(857, 900), (915, 930)]   several runs at once
 #   SELECT_TARGET      = "AB Aur"     matched ignoring case, spaces and _ / -
 # For frames that are simply bad, prefer the reject file -- it keeps a reason
 # and applies to every run of the night. See the note by load_rejects below.
@@ -128,6 +130,32 @@ THETA_OFF = -13.0
 # point source, an AGN or a star field it returns a confident wrong answer.
 FIT_ON_SKY = False
 FIT_RADII = (25, 150)   # (r_inner, r_outer) px, the butterfly annulus
+
+# Instrumental polarization: the I -> Q/U leakage that makes an unpolarized
+# source come out with Q = ipq*I, U = ipu*I.
+#
+# Each name says HOW the leakage is measured and over WHAT, because the two
+# choices are independent and more methods are coming. Read them as
+# <method>_<scope>.
+#
+#   None                    leave it uncorrected
+#   "fit_uphi_all"          minimise the U_phi residual, one ipq/ipu fitted
+#                           across every cycle at once
+#   "fit_uphi_per_cycle"    minimise the U_phi residual per cycle, then
+#                           average; the scatter gives an error bar
+#
+# BOTH fit_uphi_* options ASSUME THE SOURCE IS AZIMUTHALLY POLARIZED. They
+# will rotate a genuine U_phi signal into Q_phi and report a confident
+# number, so never use them where that is the hypothesis under test -- see
+# polarimetry.measure_ip_coronagraph, which assumes nothing about the target
+# but needs high-contrast data.
+#
+# On AB Aur the two fit_uphi_* options agree to within 0.005% in ipq and give
+# near-identical U_phi, so pick on what you believe about the instrument:
+# _all if the leakage is a property of the optics, _per_cycle if it varies
+# through the sequence or you want the error bar.
+IP_METHOD = None            # None | "fit_uphi_all" | "fit_uphi_per_cycle"
+IP_MASK_RADIUS = 22         # px, covering the saturated or occulted core
 # ---------------------------------------------------------------------------
 
 
@@ -164,6 +192,7 @@ run_log = start_reduction_log(paths.log_file)
 run_log.settings(date=DATE, target=TARGET, instrument=type(instrument).__name__,
                  background=instrument.describe_background(),
                  theta_off=THETA_OFF, fit_on_sky=FIT_ON_SKY,
+                 ip_method=IP_METHOD,
                  use_master_skies=USE_MASTER_SKIES,
                  register_method=REGISTER_METHOD,
                  beam_top_row=BEAM_TOP_ROW, beam_x_offset=BEAM_X_OFFSET)
@@ -263,8 +292,29 @@ if FIT_ON_SKY:
     log.info("fast axis on sky: %s", result.describe())
     if ip is not None:
         log.info("instrumental polarization: %s", ip.describe())
-    # for an error bar on the IP, fit it per cycle instead and take the
-    # scatter: mean_ip([fit_ip_uphi(instrument, c, theta_off) for c in cycles])
+
+# The on-sky fit above may already have produced an IP; only fit one here if
+# it did not, so a deliberate IP_METHOD never silently overrides that result.
+if ip is None and IP_METHOD:
+    if IP_METHOD == "fit_uphi_all":
+        ip = fit_ip_uphi_all(instrument, cycles, theta_off,
+                             mask_radius=IP_MASK_RADIUS,
+                             register_method=REGISTER_METHOD)
+    elif IP_METHOD == "fit_uphi_per_cycle":
+        per_cycle = [fit_ip_uphi(instrument, c, theta_off,
+                                 mask_radius=IP_MASK_RADIUS,
+                                 register_method=REGISTER_METHOD)
+                     for c in cycles]
+        ip = mean_ip(per_cycle)
+        log.info("per-cycle IP standard error: ipq %.4f, ipu %.4f",
+                 ip.diagnostics["ipq_err"], ip.diagnostics["ipu_err"])
+    else:
+        raise ValueError(
+            f"IP_METHOD must be None, 'fit_uphi_all' or "
+            f"'fit_uphi_per_cycle', not {IP_METHOD!r}. The name states the "
+            f"method and its scope, so a new measurement route arrives as a "
+            f"new name rather than changing what an old one means.")
+    log.info("instrumental polarization: %s", ip.describe())
 
 instrument.fast_axis_offset = theta_off
 

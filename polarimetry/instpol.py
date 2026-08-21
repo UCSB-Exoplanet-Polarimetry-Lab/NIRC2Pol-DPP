@@ -11,10 +11,12 @@ Two ways to measure it are provided, because neither works everywhere:
     Minimize the U_phi residual. Needs a bright, azimuthally polarized
     source (a disk) filling a usable annulus.
 
-``measure_ip_cycle``
+``measure_ip_coronagraph``
     Take the normalized Stokes right outside the occulting mask or the
     saturated core, where the flux is the star's own PSF and is assumed
-    intrinsically unpolarized. Needs high-contrast data.
+    intrinsically unpolarized. **For high-contrast data only** -- it needs a
+    bright central source that is masked or saturated, so that a well-defined
+    annulus of pure starlight exists just outside it.
 
 Both are stopgaps until the full Mueller matrix model lands, and both are
 applied at the same point in the chain that the Mueller model will occupy.
@@ -148,7 +150,7 @@ def measure_ip_annulus(Q, U, I, r_inner, r_outer, center=None,
                        method="edge_annulus", scope="cycle"):
     """Leakage from the flux-weighted normalized Stokes in an annulus.
 
-    The primitive behind :func:`measure_ip_cycle`, exposed separately so it
+    The primitive behind :func:`measure_ip_coronagraph`, exposed separately so it
     can be used on any Q/U/I you already have — a median cube, a single
     cycle, a synthetic test case.
 
@@ -199,17 +201,27 @@ def measure_ip_annulus(Q, U, I, r_inner, r_outer, center=None,
                      "npix": npix, "total_i": total_i})
 
 
-def measure_ip_cycle(instrument, cycle, r_inner=None, r_outer=None,
-                    center=None, scope="cycle", **dd_kwargs):
-    """Measure IP over one HWP cycle, from an annulus of starlight.
+def measure_ip_coronagraph(instrument, cycle, r_inner=None, r_outer=None,
+                           center=None, scope="cycle", **dd_kwargs):
+    """Measure IP over one HWP cycle from starlight at the mask edge.
+
+    **For high-contrast data only.** The method reads the leakage off an
+    annulus of the star's own PSF just outside an occulting mask or a
+    saturated core, taking that light to be intrinsically unpolarized. It
+    therefore needs a bright central source that is coronagraphically masked
+    or saturated: without one there is no radius at which the flux is known
+    starlight rather than the science signal, and the answer would be
+    whatever the target happens to be polarized to.
+
+    Unlike :func:`fit_ip_uphi` and :func:`fit_ip_uphi_all`, this makes **no
+    assumption about the target's polarization structure**, so it is the one
+    to use where azimuthal polarization is the hypothesis under test -- an
+    AGN, a merger, a star field -- provided the contrast requirement is met.
 
     The convenience wrapper: it runs ``double_difference`` to obtain the
     cycle's Q/U/I, defaults the annulus to the instrument's occulting mask,
     and hands off to :func:`measure_ip_annulus`. Identical arithmetic to
     calling that directly on Stokes planes you already have.
-
-    Builds the cycle's instrument-frame Q/U/I and calls
-    :func:`measure_ip_annulus` on an annulus at the mask edge.
 
     Parameters
     ----------
@@ -260,6 +272,146 @@ def measure_ip_cycle(instrument, cycle, r_inner=None, r_outer=None,
     return ip
 
 
+def _uphi_fit_terms(instrument, cycle, fast_axis_offset, mask_radius,
+                    crop_size, critical_angles, atol, register_method,
+                    derotate):
+    """Everything one cycle contributes to a U_phi-minimizing IP fit.
+
+    Returns ``(Q0, U0, Iq, Iu, eff_rot, annulus)``. Shared by the per-cycle
+    and all-cycle fits so the two cannot drift apart in what they optimize.
+    """
+    from utils.angles import mean_angle
+    from utils.imutils import make_circle_mask
+
+    from .mueller import _registered_stacks
+    from .stokes import CRITICAL_ANGLES, single_difference
+
+    critical_angles = critical_angles or CRITICAL_ANGLES
+    stacks = _registered_stacks(instrument, cycle, critical_angles, atol,
+                                register_method, crop_size)
+    base_rot = float(mean_angle(
+        [instrument.qu_rotation_angle(f, fast_axis_offset) for f in cycle]))
+    north = (float(mean_angle([instrument.north_angle(f) for f in cycle]))
+             if derotate else 0.0)
+    eff_rot = base_rot + 2.0 * north
+
+    shape = stacks[0][0].shape
+    annulus = (make_circle_mask(shape, min(shape) // 2 - 1)
+               & ~make_circle_mask(shape, mask_radius))
+
+    diffs, sums = zip(*(single_difference(s) for s in stacks))
+    Q0 = 0.5 * (diffs[0] - diffs[1])
+    U0 = 0.5 * (diffs[2] - diffs[3])
+    Iq = 0.5 * (sums[0] + sums[1])
+    Iu = 0.5 * (sums[2] + sums[3])
+    return Q0, U0, Iq, Iu, eff_rot, annulus
+
+
+def _uphi_residual(terms, ipq, ipu):
+    """U_phi in the annulus for one cycle's terms at a trial (ipq, ipu)."""
+    from .stokes import radial_stokes, rotate_qu
+
+    Q0, U0, Iq, Iu, eff_rot, annulus = terms
+    q, u = rotate_qu(Q0 - ipq * Iq, U0 - ipu * Iu, eff_rot)
+    _, u_phi = radial_stokes(q, u)
+    return u_phi[annulus]
+
+
+def fit_ip_uphi_all(instrument, cycles, fast_axis_offset, mask_radius=20,
+                    crop_size=400, critical_angles=None, atol=1.0,
+                    register_method="smooth_peak", derotate=True):
+    """Fit a single ipq/ipu across *every* cycle at once.
+
+    The all-cycle counterpart to :func:`fit_ip_uphi`, which fits each cycle
+    separately. Both minimize the same U_phi scatter; this one asks for the
+    one leakage pair that best explains all the cycles together, pooling
+    their annulus pixels into a single objective.
+
+    Prefer this when the leakage is a property of the optics rather than of
+    the night: two free parameters against every cycle's data, instead of two
+    per cycle. That economy is the argument for it, not a large gain in the
+    result -- measured on AB Aur (23 cycles, theta_off = -13.1) the two routes
+    agree closely::
+
+        no IP correction                    U_phi std  5.699
+        one ipq/ipu for all cycles          U_phi std  5.386   ipq -0.761%
+        per-cycle fits, then mean_ip        U_phi std  5.365   ipq -0.765%
+
+    Both remove real leakage and land within 0.005% of each other in ipq, and
+    averaging per-cycle fits was, if anything, a shade better. So choose on
+    what you believe about the instrument, not on these numbers.
+
+    Prefer :func:`fit_ip_uphi` per cycle when the leakage really does vary
+    within the sequence -- a rotator that moved, or a configuration change
+    partway through -- and :func:`mean_ip` to summarise those fits, which also
+    gives an error bar from the scatter.
+
+    Note that per-cycle fitting is only harmless because this fit has two
+    parameters. ``mueller.fit_empirical_cycle_correction`` fits sixteen per
+    cycle, and there the same per-cycle freedom does real damage: on the same
+    data it lowers each cycle's own U_phi but raises the median's from 5.70 to
+    9.07 and drops the Q_phi correlation from 0.973 to 0.926, because the
+    cycles' corrections disagree and that disagreement does not cancel.
+
+    Parameters
+    ----------
+    instrument : PolarimetryData
+        Supplies the rotation model and beam geometry.
+    cycles : list of list of Frame
+        Every complete HWP cycle, as from ``match_modulator_cycles``.
+    fast_axis_offset : float
+        Held fixed, as for :func:`fit_ip_uphi`.
+    mask_radius, crop_size, critical_angles, atol, register_method, derotate
+        As for :func:`fit_ip_uphi`.
+
+    Returns
+    -------
+    InstrumentalPolarization
+        ``scope="all_cycles"`` -- distinct from :func:`mean_ip`'s
+        ``"sequence"``, which averages separate fits rather than making one.
+        The pooled U_phi scatter before and after is in ``diagnostics``,
+        along with the number of cycles used.
+
+    Warnings
+    --------
+    **Assumes the source is azimuthally polarized**, exactly as
+    :func:`fit_ip_uphi` does. Do not use it where that is the hypothesis
+    under test.
+    """
+    import numpy as np
+    from scipy.optimize import minimize
+
+    cycles = list(cycles)
+    if not cycles:
+        raise ValueError("fit_ip_uphi_all needs at least one cycle")
+
+    terms = [_uphi_fit_terms(instrument, c, fast_axis_offset, mask_radius,
+                             crop_size, critical_angles, atol,
+                             register_method, derotate)
+             for c in cycles]
+
+    def objective(x):
+        """Pooled U_phi scatter over every cycle; lower is better."""
+        pooled = np.concatenate([_uphi_residual(t, x[0], x[1]) for t in terms])
+        return float(np.nanstd(pooled))
+
+    initial = objective(np.zeros(2))
+    result = minimize(objective, np.zeros(2), method="Nelder-Mead")
+    ipq, ipu = float(result.x[0]), float(result.x[1])
+
+    ip = InstrumentalPolarization(
+        ipq, ipu, method="uphi_min", scope="all_cycles",
+        diagnostics={"uphi_std_initial": initial,
+                     "uphi_std_final": float(result.fun),
+                     "n_cycles": len(cycles),
+                     "mask_radius": float(mask_radius),
+                     "crop_size": int(crop_size) if crop_size else None})
+    log.info("All-cycle U_phi-minimization IP over %d cycles: %s | "
+             "pooled U_phi std %.4g -> %.4g",
+             len(cycles), ip.describe(), initial, result.fun)
+    return ip
+
+
 def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
                 crop_size=400, critical_angles=None, atol=1.0,
                 register_method="smooth_peak", derotate=True):
@@ -275,6 +427,12 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
     residual beam and frame shifts, and is the right tool when those are
     the problem. This one is much faster and does not risk absorbing real
     structure into shift parameters.
+
+    This fits *one cycle*. To fit a single leakage pair across every cycle at
+    once, use :func:`fit_ip_uphi_all` -- usually the better choice, since the
+    leakage is normally a property of the optics rather than of the cycle.
+    Fitting per cycle and averaging with :func:`mean_ip` is a third thing
+    again, and not equivalent: see the note in :func:`fit_ip_uphi_all`.
 
     Parameters
     ----------
@@ -307,41 +465,18 @@ def fit_ip_uphi(instrument, cycle, fast_axis_offset, mask_radius=20,
     **Assumes the source is azimuthally polarized.** Do not use it on a
     target where that is the hypothesis under test — it will happily rotate
     a genuine U_phi signal into Q_phi and report a confident answer. For an
-    AGN, a merger or a star field, use :func:`measure_ip_cycle`.
+    AGN, a merger or a star field, use :func:`measure_ip_coronagraph` --
+    provided the data are high-contrast enough for it.
     """
     from scipy.optimize import minimize
 
-    from utils.angles import mean_angle
-    from utils.imutils import make_circle_mask
-
-    from .mueller import _registered_stacks
-    from .stokes import (CRITICAL_ANGLES, radial_stokes, rotate_qu,
-                         single_difference)
-
-    critical_angles = critical_angles or CRITICAL_ANGLES
-    stacks = _registered_stacks(instrument, cycle, critical_angles, atol,
-                                register_method, crop_size)
-    base_rot = float(mean_angle(
-        [instrument.qu_rotation_angle(f, fast_axis_offset) for f in cycle]))
-    north = (float(mean_angle([instrument.north_angle(f) for f in cycle]))
-             if derotate else 0.0)
-    eff_rot = base_rot + 2.0 * north
-
-    shape = stacks[0][0].shape
-    annulus = (make_circle_mask(shape, min(shape) // 2 - 1)
-               & ~make_circle_mask(shape, mask_radius))
-
-    diffs, sums = zip(*(single_difference(s) for s in stacks))
-    Q0 = 0.5 * (diffs[0] - diffs[1])
-    U0 = 0.5 * (diffs[2] - diffs[3])
-    Iq = 0.5 * (sums[0] + sums[1])
-    Iu = 0.5 * (sums[2] + sums[3])
+    terms = _uphi_fit_terms(instrument, cycle, fast_axis_offset, mask_radius,
+                            crop_size, critical_angles, atol, register_method,
+                            derotate)
 
     def objective(x):
         """U_phi scatter for a trial ``(ipq, ipu)``; lower is better."""
-        q, u = rotate_qu(Q0 - x[0] * Iq, U0 - x[1] * Iu, eff_rot)
-        _, u_phi = radial_stokes(q, u)
-        return float(np.nanstd(u_phi[annulus]))
+        return float(np.nanstd(_uphi_residual(terms, x[0], x[1])))
 
     initial = objective(np.zeros(2))
     result = minimize(objective, np.zeros(2), method="Nelder-Mead")

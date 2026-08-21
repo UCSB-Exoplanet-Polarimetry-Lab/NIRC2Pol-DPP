@@ -664,7 +664,12 @@ def center_frame(frame, method="smooth_peak", background_radius=50,
         fill = float(np.median(frame.data[outside]))
 
     h, w = frame.shape
-    shifted = translate(frame.data, h / 2 - cy, w / 2 - cx, fill=fill)
+    # (h-1)/2, not h/2: for a 0-indexed axis of length h the pixel centres run
+    # 0..h-1, so the middle is (h-1)/2. This is the convention azimuthal_angle,
+    # the fast-axis fits and crosscorr's template_center all use, and getting it
+    # wrong here shifts every frame half a pixel it did not need to move.
+    shifted = translate(frame.data, (h - 1) / 2 - cy, (w - 1) / 2 - cx,
+                        fill=fill)
 
     centered = Frame(shifted, frame.header.copy())
     centered["CX"] = float(cx)
@@ -911,7 +916,13 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0,
                     ref_cy, ref_cx, np.hypot(cy - ref_cy, cx - ref_cx))
 
     h, w = mean_beam.shape
-    out = np.stack([translate(beam, h / 2 - cy, w / 2 - cx, fill=fill)
+    # (h-1)/2, not h/2 -- see center_frame. radial_stokes takes its azimuth
+    # origin from azimuthal_angle, which defaults to ((ny-1)/2, (nx-1)/2), so
+    # centring the star half a pixel away from that put ~2% of a tangential
+    # disk's signal into U_phi: the null channel theta_off and the IP fits are
+    # judged by.
+    out = np.stack([translate(beam, (h - 1) / 2 - cy, (w - 1) / 2 - cx,
+                              fill=fill)
                     for beam in stack], axis=0)
     return out, (cy, cx)
 
