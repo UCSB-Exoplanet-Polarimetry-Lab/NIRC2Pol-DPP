@@ -243,6 +243,32 @@ class ReductionConfig:
         log.info("Reduction config: %s (%d options set)", path, len(clean))
         return cls(**clean)
 
+    def configure(self, instrument):
+        """Apply the per-dataset settings to an instrument, and return it.
+
+        These five attributes are the only ones a *reduction* chooses;
+        everything else on the instrument -- plate scale, detector epochs,
+        the rotation model -- is a property of the hardware and comes from
+        ``instruments/nirc2.toml``.
+
+        You do not need a subclass to set them. They are read through
+        ``self``, so assigning them on the instance works, which is what this
+        does. Subclass only when you want to change *behaviour*: override a
+        method, add an instrument, model a night the base class cannot
+        describe. Setting five values is not a reason.
+
+        The beam geometry is assigned even when None, which is the usual
+        case: None means "measure it from the data", and
+        :func:`reduction.fit_beam_geometry` fills it in afterwards. Call this
+        before measuring, not after, or it will overwrite what was measured.
+        """
+        instrument.background_method = self.background_method
+        instrument.background_box = self.background_box
+        instrument.background_annulus = self.background_annulus
+        instrument.top_row_start = self.beam_top_row
+        instrument.beam_x_offset = self.beam_x_offset
+        return instrument
+
     def describe(self):
         """Every option and its value, for the reduction log."""
         return {f.name: getattr(self, f.name) for f in fields(self)}

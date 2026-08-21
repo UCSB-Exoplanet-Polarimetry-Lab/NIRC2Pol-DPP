@@ -82,23 +82,10 @@ cfg = ReductionConfig.from_toml(CONFIG_PATH)
 # ---------------------------------------------------------------------------
 
 
-class NightPolData(nirc2.NIRC2PolarimetryData):
-    """NIRC2 as configured for this night.
-
-    Same pattern as the notebook's ``LpPolData``: the background and the beam
-    geometry are the per-dataset choices, so they are all this subclass sets.
-    Detector constants and the polarimetric rotation model live on the base
-    class.
-    """
-
-    background_method = cfg.background_method
-    background_box = cfg.background_box
-    background_annulus = cfg.background_annulus
-    top_row_start = cfg.beam_top_row
-    beam_x_offset = cfg.beam_x_offset
-
-
-instrument = NightPolData()
+# No subclass needed: the config sets the five per-dataset attributes on the
+# instance. Subclass NIRC2PolarimetryData only to change behaviour -- override
+# a method, describe a night the base class cannot.
+instrument = cfg.configure(nirc2.NIRC2PolarimetryData())
 paths = ObslogPaths(cfg.observations_root, cfg.date)
 paths.make_folders()
 # Frames excluded from every run of this night, each with a reason. Add one
