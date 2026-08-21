@@ -45,6 +45,51 @@ def single_difference(beam_stack):
     return beam_stack[1] - beam_stack[0], beam_stack[1] + beam_stack[0]
 
 
+def normalized_single_difference(beam_stack, mask=None):
+    """Flux-weighted normalized single difference, ``sum(d) / sum(s)``.
+
+    For a registered ``(2, ny, nx)`` beam stack this is the fractional
+    imbalance between the two Wollaston beams over ``mask`` (default: every
+    finite pixel) -- the single-exposure analogue of ``q = Q/I``.
+
+    What it *means* depends entirely on where you measure it, and that is the
+    caller's business. Over a region of intrinsically unpolarized starlight it
+    estimates the instrumental I -> Q/U leakage for that exposure. Over a
+    polarized source it is simply the modulated signal. Over a flat it tells
+    you how the two beams' throughput compares, which is how you would check
+    whether a flat set is imprinting its source's polarization.
+
+    Note this is *not* an ipq/ipu pair: one exposure sits at a single HWP
+    angle, so it carries one modulated combination of Q and U (at HWP 0 it
+    is +Q, at 45 deg -Q, at 22.5 deg +U), not both.
+
+    .. warning::
+
+       As a leakage estimate this inherits the weakness of every annulus
+       ratio: ``d`` contains any real polarized signal in the mask, so the
+       mask has to exclude the source, and the ratio destabilises wherever
+       the summed intensity is small. Measured on AB Aur the equivalent
+       quantity drifted from -0.9% to -8.6% between r = 22-40 px and
+       r = 200-224 px purely as the denominator shrank. Nothing in the
+       pipeline uses it for that purpose any more; it is kept as a
+       measurement primitive, not as a correction.
+
+    Returns a plain float. Raises ``ValueError`` if the mask selects nothing
+    or the summed intensity is zero, since the ratio is then meaningless
+    rather than merely noisy.
+    """
+    d, s = single_difference(beam_stack)
+    m = np.isfinite(s) if mask is None else (mask & np.isfinite(s))
+    if not m.any():
+        raise ValueError("normalized_single_difference: mask selects no "
+                         "finite pixels")
+    total = float(np.nansum(s[m]))
+    if not np.isfinite(total) or total == 0.0:
+        raise ValueError("normalized_single_difference: summed intensity is "
+                         "zero over the mask")
+    return float(np.nansum(d[m])) / total
+
+
 def _angles_match(a, b, atol):
     """Circular comparison of modulator angles modulo 180 deg (so -0.002
         matches 0, and 179.9 matches 0).

@@ -11,6 +11,7 @@ from .stokes import (
     polarization_products,
     radial_stokes,
     rotate_qu,
+    normalized_single_difference,
     single_difference,
 )
 from .products import ProductWriter
@@ -66,6 +67,7 @@ __all__ = [
     "radial_stokes",
     "rotate_qu",
     "scan_fast_axis_offset_butterfly",
+    "normalized_single_difference",
     "single_difference",
     "subtract_ip",
     "wrap_offset",
