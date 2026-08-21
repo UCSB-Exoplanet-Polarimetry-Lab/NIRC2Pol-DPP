@@ -6,7 +6,7 @@
 #
 # Instrument constants (plate scale, detector epochs, beam
 # geometry seed) are NOT here -- they live in
-# instruments/nirc2.toml, because they are properties of the
+# nirc2pol/instruments/nirc2.toml, because they are properties of the
 # instrument rather than choices about this reduction.
 
 [paths]
@@ -106,3 +106,17 @@ ip_method = "mm_model"
 # Radius excluded from the fit_uphi annulus, covering the saturated or
 # occulted core. [px]
 ip_mask_radius = 22.0
+
+[products]
+# Keep the master darks/flats/skies and every dark-, flat- and bad-pixel-
+# corrected science frame. They are built either way, since nothing
+# downstream can run without them; this only says whether they are
+# written. Turn it off for a quick re-reduction whose calibration is
+# already on disk.
+save_preproc = true
+
+# Keep one Stokes cube file per HWP cycle, beside the stacked (ncycles,
+# [I,Q,U], y, x) cube. The stacked cube carries the same data and is
+# always written, so this decides whether each cycle is also its own file
+# -- to look at one, or to hand one on.
+save_individual_cycles = true

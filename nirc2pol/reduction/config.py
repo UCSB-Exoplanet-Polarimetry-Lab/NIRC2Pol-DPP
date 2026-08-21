@@ -164,6 +164,23 @@ class ReductionConfig:
         "occulted core.",
         "instrumental_polarization", unit="px")
 
+    # ---- what is kept on disk ------------------------------------------
+    save_preproc: bool = _f(
+        True,
+        "Keep the master darks/flats/skies and every dark-, flat- and "
+        "bad-pixel-corrected science frame. They are built either way, since "
+        "nothing downstream can run without them; this only says whether "
+        "they are written. Turn it off for a quick re-reduction whose "
+        "calibration is already on disk.",
+        "products")
+    save_individual_cycles: bool = _f(
+        True,
+        "Keep one Stokes cube file per HWP cycle, beside the stacked "
+        "(ncycles, [I,Q,U], y, x) cube. The stacked cube carries the same "
+        "data and is always written, so this decides whether each cycle is "
+        "also its own file -- to look at one, or to hand one on.",
+        "products")
+
     def __post_init__(self):
         """Check every enumerated field, and the rules that span fields."""
         for f in fields(self):

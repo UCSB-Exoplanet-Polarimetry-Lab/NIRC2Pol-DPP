@@ -124,9 +124,12 @@ sorted_files = instrument.sort_frames(raw_files)
 # any of them explicitly to override. Flats come in two kinds -- dome and
 # sky -- and each is split into polarimetric and not, so this can build up
 # to four masters per filter.
+# cfg.save_preproc decides whether the masters and the corrected science
+# frames are kept. They are built either way -- nothing downstream runs
+# without them -- so this is about disk, not about what the reduction does.
 darks = load_frames(sorted_files["darks"], rejects=rejects)
 master_darks, dark_masks = make_master_darks(darks, instrument=instrument)
-if master_darks:
+if master_darks and cfg.save_preproc:
     save_frames(paths.darks_file, master_darks)
 
 master_flats, flat_masks = make_master_flats(
@@ -135,7 +138,7 @@ master_flats, flat_masks = make_master_flats(
     master_darks,
     instrument=instrument,
 )
-if master_flats:
+if master_flats and cfg.save_preproc:
     save_frames(paths.flats_file, master_flats)
 
 master_skies = None
@@ -143,7 +146,7 @@ if cfg.use_master_skies:
     master_skies, _ = make_master_skies(
         load_frames(sorted_files["flats_sky"], rejects=rejects),
         master_darks, instrument=instrument)
-    if master_skies:
+    if master_skies and cfg.save_preproc:
         save_frames(paths.skies_file, master_skies)
 
 master_masks = make_master_masks(dark_masks, flat_masks)
@@ -168,7 +171,8 @@ for frame in sci_frames:
         gain=instrument.gain(frame),
         saturation_limit=instrument.saturation_limit(frame),
     )
-    reduced.save(os.path.join(paths.reduced_folder, reduced["RED-FN"]))
+    if cfg.save_preproc:
+        reduced.save(os.path.join(paths.reduced_folder, reduced["RED-FN"]))
     reduced_frames.append(reduced)
 
 # --- 3b. choose the frames this reduction covers --------------------------
@@ -266,7 +270,10 @@ header["THETAOFF"] = (theta_off, "fast axis offset [deg]")
 
 # ObslogPaths owns the night layout (raw/, reduced/, sequences/); the writer
 # owns the product set and its provenance, so it is rooted at sequences/.
-writer = ProductWriter(paths.sequences_folder, target=cfg.target)
+# save_cycle_files gates the one-file-per-cycle folder only; the stacked
+# (ncycles, [I,Q,U], y, x) cube carries the same data and is always written.
+writer = ProductWriter(paths.sequences_folder, target=cfg.target,
+                       save_cycle_files=cfg.save_individual_cycles)
 writer.save_stokes_cycles(stokes_cubes, cycles, header=header)
 writer.save_median_stokes(median_cube, header=header)
 writer.save_derived_products(median_cube, header=header)
