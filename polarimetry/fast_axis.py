@@ -374,27 +374,30 @@ def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
     radial Stokes just as a frame rotation does, so an offset fitted with the
     leakage still in it is biased by however much IP there is.
 
-    Which means the order the two are done in is not free:
+    Which means the order the two are done in is not free. Every IP route
+    currently offered as an ``ip_method`` -- :func:`polarimetry.fit_ip_uphi`
+    and :func:`polarimetry.fit_ip_uphi_all` -- takes the offset as an *input*,
+    so the offset has to be fitted first with ``ip=None``, and is biased.
 
-    * the ``edge_annulus`` routes measure the leakage in the instrument frame
-      and need no offset, so they can run **first** and be passed in here,
-      giving an unbiased offset;
-    * the ``fit_uphi`` routes take the offset as an input, so with those the
-      offset has to be fitted first with ``ip=None`` and is biased.
+    A leakage that needs no offset can be measured first and passed in here
+    instead, which removes the bias. :func:`polarimetry.measure_ip_coronagraph`
+    is such a measurement -- it works in the instrument frame -- but it is not
+    offered as an ``ip_method``, for the reasons in its own docstring, so this
+    path is for a leakage you have established some other way.
 
     Parameters
     ----------
     ip : InstrumentalPolarization, optional
-        A leakage to remove before fitting, not one to fit. Pass the result of
-        an ``edge_annulus`` measurement here -- those need no offset, so they
-        can be made first -- and the offset comes back unbiased. Leaving this
-        None fits the offset with any leakage still present, which biases it.
+        A leakage to remove before fitting, not one to fit. Any measurement
+        that did not itself need an offset can go here, and the offset comes
+        back unbiased. Leaving this None fits the offset with the leakage
+        still present, which biases it.
     r_inner, r_outer : float
         Annulus [px] holding the disk -- this fit works on U_phi, where a
         tangentially polarized disk contributes nothing by definition, so the
-        annulus should *span* the disk rather than avoid it. (The
-        ``edge_annulus`` IP routines work on Q/U instead and need the
-        opposite: radii that exclude the disk.) ``r_inner`` must clear the
+        annulus should *span* the disk rather than avoid it. (Contrast
+        :func:`polarimetry.measure_ip_annulus`, which works on Q/U and needs
+        the opposite: radii that exclude the disk.) ``r_inner`` must clear the
         occulted or saturated core; the default 20 px suits NIRC2
         coronagraphic data and should be checked against the actual mask.
     prepared : list of PreparedCycle, optional

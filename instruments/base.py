@@ -17,8 +17,6 @@ import logging
 from reduction.sky import subtract_background
 from abc import ABC, abstractmethod
 
-import numpy as np
-
 log = logging.getLogger(__name__)
 
 def read_config(path):

@@ -15,7 +15,8 @@ channels:
   - conda-forge
 
 dependencies:
-  # tomllib (utils/paths.py) is standard library from 3.11 onward.
+  # tomllib is standard library from 3.11 onward. It reads every config
+  # here: instruments/nirc2.toml, the reduction config, and the rejects.
   - python =3.12                  # tested on 3.12.12
   - pip
 
@@ -31,7 +32,6 @@ dependencies:
   # only needed for the docs, examples and tests, not by the pipeline modules
   - matplotlib-base >=3.8,<4      # tested on 3.10.8
   - ipykernel                     # to run examples/tutorial.ipynb
-  - pytest >=7                    # tested on 9.1.1; run with: pytest
 
   # Image rotation goes through pyklip.klip.rotate -- deliberate, since it is
   # the validated implementation -- but pyklip is not packaged on conda-forge.

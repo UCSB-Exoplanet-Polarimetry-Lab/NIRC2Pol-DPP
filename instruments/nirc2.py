@@ -11,9 +11,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
-from dataclasses import dataclass, field
-from datetime import date as _date
 from instruments.base import read_config
 from utils.angles import (par_angle, sexagesimal_to_degrees,
                           small_angle_distance)
