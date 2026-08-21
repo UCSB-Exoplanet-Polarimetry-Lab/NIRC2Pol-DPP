@@ -68,10 +68,7 @@ class InstrumentalPolarization:
         ``"cycle"`` (one per HWP cycle), ``"sequence_joint"`` (one value
         fitted or measured over the whole sequence at once) or
         ``"sequence_mean"`` (per-cycle values averaged, by
-        :func:`mean_ip`). A per-*exposure* leakage is not represented by this
-        class at all -- ``double_difference(ip_frame_annulus=...)`` computes
-        and removes it inline, via
-        :func:`polarimetry.stokes.normalized_single_difference`.
+        :func:`mean_ip`).
     diagnostics : dict
         Whatever the measuring routine wants to record — pixel counts,
         before/after residuals, radii used. Carried into the FITS
