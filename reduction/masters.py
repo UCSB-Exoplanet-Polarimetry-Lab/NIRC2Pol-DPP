@@ -213,6 +213,10 @@ def make_master_darks(dark_frames, keylist=None, bad_pixel_mask=None,
     bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
                                          "bad_pixel_mask", call=True)
 
+    # How to tell whether the modulator was in the beam. Bound method rather
+    # than a value, so it is taken from the instrument directly.
+    in_beam = getattr(instrument, "modulator_in_beam", None)
+
     if len(dark_frames) < min_frames:
         log.warning("Not enough dark frames found, skipping...")
         return [], []
@@ -224,14 +228,28 @@ def make_master_darks(dark_frames, keylist=None, bad_pixel_mask=None,
 
 
 def split_polarimetric_flats(flat_frames, modulator_keyword, critical_angles,
-                             atol=1.0):
-    """Split flats into (polarimetric, regular).
+                             atol=1.0, in_beam=None):
+    """Split flats into (polarimetric, regular), discarding what is neither.
 
-        *Polarimetric* flats are taken as a discrete sequence at the modulator's
-        critical angles; combining a full set averages the polarized response
-        of the flat source over the modulation cycle. Flats taken while the
-        modulator rotates continuously (calibration sweeps) do not form such a
-        set and are treated as regular flats.
+        A flat falls into one of three states, and only two of them are usable.
+
+        **Regular** flats are taken with the modulator *out of the beam*. They
+        see the bare optics, so they are ordinary flat fields.
+
+        **Polarimetric** flats are taken with the modulator in the beam,
+        stepping through a *complete* set of its critical angles. Combining the
+        full set averages the polarized response of the flat source over the
+        modulation cycle.
+
+        **Neither** is a flat taken with the modulator in the beam that is not
+        part of a complete cycle -- a partial set, or a continuous calibration
+        sweep. It cannot serve as a polarimetric flat, because the cycle does
+        not close and the source's own polarization stays in it; twilight sky
+        is strongly polarized, so a set of 0, 45 and 67.5 has its Q pair cancel
+        while the lone U angle does not. It cannot serve as a regular flat
+        either, because the modulator was in the beam and its transmission is
+        baked in. Such flats are dropped with a warning rather than quietly
+        demoted.
 
     Parameters
     ----------
@@ -243,24 +261,136 @@ def split_polarimetric_flats(flat_frames, modulator_keyword, critical_angles,
         The instrument's critical angles.
     atol : float, optional
         Tolerance in degrees, compared circularly.
+    in_beam : callable, optional
+        ``in_beam(frame)`` returning True when the modulator was in the beam,
+        False when parked out of it and None when unknown -- normally
+        ``instrument.modulator_in_beam``. Without it every frame is unknown
+        and the split falls back to judging on angle alone, which is what this
+        did before the modulator position was recorded.
 
     Returns
     -------
     polarimetric : list of Frame
-        Flats taken at a critical angle.
+        Flats forming a complete cycle at the critical angles.
     regular : list of Frame
-        Everything else.
-    """
-    from utils.angles import is_critical_angle
+        Flats taken with the modulator out of the beam, plus frames whose
+        modulator position is unknown and which do not look like a cycle.
 
-    pol, regular = [], []
+    Notes
+    -----
+    Completeness is judged per filter, since flats of different bands are never
+    combined into one master; a complete Lp cycle therefore cannot vouch for a
+    partial H one.
+
+    "Complete" means every critical angle appears the *same number of times*,
+    not merely that each appears once. The cycle average only cancels the flat
+    source's polarization when the angles carry equal weight, so a set holding
+    two frames at one angle and one at each of the others is lopsided in the
+    same way a missing angle is. Surplus frames at over-represented angles are
+    set aside -- the earliest are kept, so whole cycles survive in the order
+    observed -- leaving the largest balanced set.
+    """
+    from utils.angles import angles_match, is_critical_angle
+
+    def band_of(flat):
+        """The flat's band, as flat_sort_key reads it."""
+        return str(flat.get("FWINAME")
+                   or str(flat.get("FILTER", "")).split("+")[0].strip())
+
+    candidates, regular, unusable = [], [], []
+
     for f in flat_frames:
+        state = in_beam(f) if in_beam is not None else None
         angle = f.get(modulator_keyword)
-        if angle is not None and is_critical_angle(float(angle),
-                                                   critical_angles, atol):
-            pol.append(f)
+        at_critical = (angle is not None
+                       and is_critical_angle(float(angle), critical_angles,
+                                             atol))
+        if state is False:
+            regular.append(f)                  # modulator out: a plain flat
+        elif state is True:
+            # in the beam: only a complete cycle is usable, and an angle that
+            # is not critical at all cannot be part of one
+            (candidates if at_critical else unusable).append((f, state))
         else:
-            regular.append(f)
+            # unknown: judge on angle alone, as before PCUNAME was recorded
+            (candidates.append((f, state)) if at_critical
+             else regular.append(f))
+
+    by_band = {}
+    for f, state in candidates:
+        by_band.setdefault(band_of(f), []).append((f, state))
+
+    pol, trimmed = [], []
+    for band, group in by_band.items():
+        seen = [float(f.get(modulator_keyword)) for f, _ in group]
+        missing = [a for a in critical_angles
+                   if not any(angles_match(a, s, atol) for s in seen)]
+
+        if missing:
+            log.warning("%d %s flat(s) sit at critical angles but the set is "
+                        "missing %s, so it is not a complete modulation cycle.",
+                        len(group), band or "unfiltered",
+                        ", ".join(f"{a:g}" for a in missing))
+            for f, state in group:
+                # only frames known to have had the modulator in the beam are
+                # unusable; an unknown one cannot be shown to carry its
+                # transmission, so it stays an ordinary flat as it always did
+                (unusable if state is True else regular).append(
+                    (f, state) if state is True else f)
+            continue
+
+        # Every angle is present. It also has to be present the *same number
+        # of times*: the cycle average only cancels the source's polarization
+        # if each angle carries equal weight, so 2 x 67.5 against one each of
+        # the others is the same fault as a missing angle, just smaller.
+        buckets = {}
+        for (f, state), angle in zip(group, seen):
+            for a in critical_angles:
+                if angles_match(a, angle, atol):
+                    buckets.setdefault(a, []).append((f, state))
+                    break
+
+        counts = {a: len(items) for a, items in buckets.items()}
+        keep_per_angle = min(counts.values())
+
+        surplus = []
+        for a in sorted(buckets):
+            items = buckets[a]
+            pol += [f for f, _ in items[:keep_per_angle]]
+            surplus += items[keep_per_angle:]
+
+        if surplus:
+            log.warning(
+                "%s flats cover the cycle unevenly (%s), so %d balanced "
+                "cycle(s) are kept and %d surplus frame(s) set aside: %s. "
+                "These are sound frames -- they are dropped only because an "
+                "angle observed more often than the others weights the cycle "
+                "average toward it, and the flat source's own polarization "
+                "stops cancelling.",
+                band or "Unfiltered",
+                ", ".join(f"{a:g}deg x{counts[a]}" for a in sorted(counts)),
+                keep_per_angle, len(surplus),
+                ", ".join(str(f.get("FILENAME") or "?") for f, _ in surplus))
+        trimmed += surplus
+
+    # surplus frames whose modulator position is unknown cannot be shown to
+    # carry its transmission, so they stay ordinary flats; the rest are dropped
+    regular += [f for f, state in trimmed if state is not True]
+
+    if unusable:
+        names = ", ".join(str(f.get("FILENAME") or "?") for f, _ in unusable)
+        log.warning(
+            "DISCARDING %d flat(s) taken with the modulator IN the beam but "
+            "not forming a complete cycle: %s. They are not polarimetric flats "
+            "-- the cycle does not close, so the flat source's own "
+            "polarization stays in them -- and they are not ordinary flats "
+            "either, because the modulator's transmission is baked in. Take "
+            "the missing angles, or take flats with the modulator parked out "
+            "of the beam.", len(unusable), names)
+
+    order = {id(f): i for i, f in enumerate(flat_frames)}
+    pol.sort(key=lambda f: order[id(f)])
+    regular.sort(key=lambda f: order[id(f)])
     return pol, regular
 
 
@@ -381,6 +511,10 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
     bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
                                          "bad_pixel_mask", call=True)
 
+    # How to tell whether the modulator was in the beam. Bound method rather
+    # than a value, so it is taken from the instrument directly.
+    in_beam = getattr(instrument, "modulator_in_beam", None)
+
     if len(sky_frames) < min_frames:
         log.warning("Not enough sky frames found, skipping...")
         return [], []
@@ -450,11 +584,17 @@ def flat_sort_key(flat, required_type=None, flat_types=None,
         2. the band-required type (sky for L'/M, dome for JHK) before the other
            kind -- the wrong illumination is a worse error than losing the
            critical-angle property
-        3. polarimetric (critical-angle) sets before the rest
-        4. more frames first
+        3. dark-subtracted before ``+NODARK``, so ``SKY`` outranks
+           ``SKY+NODARK``
+        4. polarimetric (critical-angle) sets before the rest
+        5. more frames first
 
-        Dark subtraction is not ranked here: a flat without a dark is refused
-        outright by :func:`make_flats` unless deliberately allowed.
+        A ``+NODARK`` flat only exists when someone passed
+        ``allow_flat_without_dark=True`` to :func:`make_flats`, which is rare.
+        It ranks above the wrong *type* but below anything of its own type
+        that has a dark, and above polarimetric: an unsubtracted pedestal
+        survives normalization and divides a real photometric error into every
+        frame, which costs more than losing the critical-angle property.
 
     Parameters
     ----------
@@ -474,6 +614,7 @@ def flat_sort_key(flat, required_type=None, flat_types=None,
     """
     flattype = str(flat.get("FLATTYPE", ""))
     base = flattype.split("+")[0]
+    nodark = "NODARK" in flattype
 
     band = str(flat.get("FWINAME")
                or str(flat.get("FILTER", "")).split("+")[0].strip())
@@ -482,7 +623,7 @@ def flat_sort_key(flat, required_type=None, flat_types=None,
 
     type_rank = 0 if base == wanted else 1
 
-    return (band, type_rank, not flat.get("POLFLAT", False),
+    return (band, type_rank, nodark, not flat.get("POLFLAT", False),
             -flat.get("NFRAMES", 0))
 
 
@@ -581,6 +722,10 @@ def make_master_flats(dome_frames, sky_frames,
     bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
                                          "bad_pixel_mask", call=True)
 
+    # How to tell whether the modulator was in the beam. Bound method rather
+    # than a value, so it is taken from the instrument directly.
+    in_beam = getattr(instrument, "modulator_in_beam", None)
+
     def build_kind(frames, flattype):
         """Build one kind of flat, split into polarimetric and not."""
         if not frames:
@@ -588,15 +733,20 @@ def make_master_flats(dome_frames, sky_frames,
 
         if modulator_keyword is not None and critical_angles is not None:
             pol_frames, plain_frames = split_polarimetric_flats(
-                frames, modulator_keyword, critical_angles)
+                frames, modulator_keyword, critical_angles, in_beam=in_beam)
             if pol_frames:
                 log.info("Found %d polarimetric %s flats at critical angles "
                          "(%d other %s flats)", len(pol_frames),
                          flattype.lower(), len(plain_frames),
                          flattype.lower())
-            else:
-                log.info("No critical-angle polarimetric %s flats found",
+            elif plain_frames:
+                log.info("No complete polarimetric %s flat cycle, so ordinary "
+                         "%s flats are used", flattype.lower(),
                          flattype.lower())
+            else:
+                log.warning("No usable %s flats: none form a complete "
+                            "polarimetric cycle, and none were taken with the "
+                            "modulator out of the beam.", flattype.lower())
             groups = [(pol_frames, True), (plain_frames, False)]
         else:
             groups = [(frames, False)]
