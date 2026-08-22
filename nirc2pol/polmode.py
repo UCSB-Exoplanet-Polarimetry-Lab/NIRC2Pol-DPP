@@ -278,12 +278,18 @@ def run(cfg, config_path=None):
 
     # ObslogPaths owns the night layout (raw/, reduced/, sequences/); the
     # writer owns the product set and its provenance, so it is rooted at
-    # sequences/. save_cycle_files gates the one-file-per-cycle folder only;
-    # the stacked (ncycles, [I,Q,U], y, x) cube carries the same data and is
-    # always written.
-    writer = ProductWriter(paths.sequences_folder, target=cfg.target,
-                           save_cycle_files=cfg.save_individual_cycles)
-    writer.save_stokes_cycles(stokes_cubes, cycles, header=header)
+    # sequences/.
+    writer = ProductWriter(paths.sequences_folder, target=cfg.target)
+
+    # save_individual_cycles decides whether the per-cycle Stokes data is
+    # kept at all. Both forms go together or stay together: the stacked
+    # (ncycles, [I,Q,U], y, x) cube and the one-file-per-cycle folder hold
+    # the same pixels, and differ only in that each per-cycle file carries
+    # its own cycle header -- the PARANG, EL and ROTPDEST of that cycle --
+    # where the stacked cube carries only the first cycle's. Off, the median
+    # cube and the derived products are all that is written.
+    if cfg.save_individual_cycles:
+        writer.save_stokes_cycles(stokes_cubes, cycles, header=header)
     writer.save_median_stokes(median_cube, header=header)
     writer.save_derived_products(median_cube, header=header)
 

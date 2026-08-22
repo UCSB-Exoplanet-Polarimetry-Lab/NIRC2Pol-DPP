@@ -6,8 +6,9 @@
 #
 # Instrument constants (plate scale, detector epochs, beam
 # geometry seed) are NOT here -- they live in
-# nirc2pol/instruments/nirc2.toml, because they are properties of the
-# instrument rather than choices about this reduction.
+# nirc2pol/instruments/nirc2.toml, because they are
+# properties of the instrument rather than choices about
+# this reduction.
 
 [paths]
 # Root folder holding ONE SUBFOLDER PER NIGHT -- not the folder your FITS
@@ -115,8 +116,10 @@ ip_mask_radius = 22.0
 # already on disk.
 save_preproc = true
 
-# Keep one Stokes cube file per HWP cycle, beside the stacked (ncycles,
-# [I,Q,U], y, x) cube. The stacked cube carries the same data and is
-# always written, so this decides whether each cycle is also its own file
-# -- to look at one, or to hand one on.
+# Keep the per-cycle Stokes data: the stacked (ncycles, [I,Q,U], y, x)
+# cube AND the folder of one file per cycle. Those two are the same pixels
+# written twice, differing only in that each per-cycle file carries its
+# own cycle header, so they stand or fall together. Off, the median cube
+# and the derived products are all that is written, and no cycle can be
+# re-combined or dropped afterwards without reducing the night again.
 save_individual_cycles = true

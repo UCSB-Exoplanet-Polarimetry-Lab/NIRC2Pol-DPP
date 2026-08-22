@@ -11,8 +11,9 @@ The per-night file you edit is TOML, and it is *generated* from this class by
 automatically and the two cannot drift apart.
 
 Instrument constants are a different thing and live in
-``nirc2pol/instruments/nirc2.toml``: those are properties of the instrument, the same
-for everyone reducing that night. This file is the choices *you* make.
+``nirc2pol/instruments/nirc2.toml``: those are properties of the instrument,
+the same for everyone reducing that night. This file is the choices *you*
+make.
 """
 
 from __future__ import annotations
@@ -175,10 +176,13 @@ class ReductionConfig:
         "products")
     save_individual_cycles: bool = _f(
         True,
-        "Keep one Stokes cube file per HWP cycle, beside the stacked "
-        "(ncycles, [I,Q,U], y, x) cube. The stacked cube carries the same "
-        "data and is always written, so this decides whether each cycle is "
-        "also its own file -- to look at one, or to hand one on.",
+        "Keep the per-cycle Stokes data: the stacked (ncycles, [I,Q,U], y, "
+        "x) cube AND the folder of one file per cycle. Those two are the "
+        "same pixels written twice, differing only in that each per-cycle "
+        "file carries its own cycle header, so they stand or fall together. "
+        "Off, the median cube and the derived products are all that is "
+        "written, and no cycle can be re-combined or dropped afterwards "
+        "without reducing the night again.",
         "products")
 
     def __post_init__(self):
@@ -264,8 +268,9 @@ class ReductionConfig:
 
         The beam geometry is assigned even when None, which is the usual
         case: None means "measure it from the data", and
-        :func:`nirc2pol.reduction.fit_beam_geometry` fills it in afterwards. Call this
-        before measuring, not after, or it will overwrite what was measured.
+        :func:`nirc2pol.reduction.fit_beam_geometry` fills it in
+        afterwards. Call this before measuring, not after, or it will
+        overwrite what was measured.
         """
         instrument.background_method = self.background_method
         instrument.background_box = self.background_box
@@ -324,8 +329,9 @@ class ReductionConfig:
             "#",
             "# Instrument constants (plate scale, detector epochs, beam",
             "# geometry seed) are NOT here -- they live in",
-            "# nirc2pol/instruments/nirc2.toml, because they are properties of the",
-            "# instrument rather than choices about this reduction.",
+            "# nirc2pol/instruments/nirc2.toml, because they are",
+            "# properties of the instrument rather than choices about",
+            "# this reduction.",
             "",
         ]
         if header is not None:
