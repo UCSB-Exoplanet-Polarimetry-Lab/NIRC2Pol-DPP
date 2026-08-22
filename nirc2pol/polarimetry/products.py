@@ -14,8 +14,8 @@ the user sets in a single place::
 Layout under ``output_dir``::
 
     <target>_reduced/            one FITS per reduced science frame
-    <target>_stokes_cycles/      one [I,Q,U] cube per HWP cycle
-    <target>_stokes_cycles.fits  all cycles as one (ncycles, 3, ny, nx) cube
+    <target>_stokes_cycles/      one [I,Q,U] cube per HWP cycle, each with
+                                 its own cycle's header
     <target>_median_stokes.fits  median-combined [I, Q, U]
     <target>_PI.fits, _AoLP.fits, _DoLP.fits
     <target>_Qphi.fits, _Uphi.fits
@@ -46,13 +46,9 @@ class ProductWriter:
         Prefix for product filenames.
     overwrite : bool
         Overwrite existing files (default True).
-    save_cycle_files : bool
-        Also write one FITS per HWP cycle alongside the stacked cube
-        (default True).
     """
 
-    def __init__(self, output_dir, target="target", overwrite=True,
-                 save_cycle_files=True):
+    def __init__(self, output_dir, target="target", overwrite=True):
         """Create a writer rooted at one output directory.
 
         Parameters
@@ -63,13 +59,10 @@ class ProductWriter:
             Prefix for every filename, so several targets can share a directory.
         overwrite : bool, optional
             Replace existing files.
-        save_cycle_files : bool, optional
-            Also write one file per HWP cycle beside the stacked cube.
         """
         self.output_dir = os.path.abspath(os.path.expanduser(output_dir))
         self.target = target
         self.overwrite = overwrite
-        self.save_cycle_files = save_cycle_files
         os.makedirs(self.output_dir, exist_ok=True)
         log.info("Products will be written to %s", self.output_dir)
 
@@ -146,58 +139,68 @@ class ProductWriter:
         return paths
 
     def save_stokes_cycles(self, cubes, cycles=None, header=None, **params):
-        """Write the per-HWP-cycle Stokes cubes.
+        """Write one Stokes cube file per HWP cycle.
 
-                ``cubes`` is ``(ncycles, 3, ny, nx)``. Each cycle's own header (from
-                its first frame, if ``cycles`` is given) is preserved in the
-                per-cycle files, with the cycle index recorded.
+        ``cubes`` is ``(ncycles, 3, ny, nx)``, written as ``ncycles`` files
+        in ``<target>_stokes_cycles/``. Separate files rather than one
+        stacked array because each keeps its **own** cycle's header -- that
+        cycle's PARANG, EL and ROTPDEST. A stacked cube can carry only one
+        header, which would describe the first cycle and misdescribe every
+        other, and each cycle sits at a different point on the sky.
 
         Parameters
         ----------
         cubes : ndarray
             ``(ncycles, 3, ny, nx)`` per-cycle cubes.
         cycles : list of list of Frame, optional
-            The cycles they came from, used for per-file headers.
+            The cycles they came from; each file takes the header of its own
+            cycle's first frame. Without them every file falls back to
+            ``header``, which is the same header on all of them.
         header : Header, optional
-            Header carried onto the products.
+            Reduction-level header. Keywords it carries that the cycle's own
+            header does not -- ``THETAOFF``, say -- are copied in; where both
+            carry one, the cycle's own value wins, since that is the value
+            describing this cube. Commentary cards (HISTORY, COMMENT) are not
+            copied: ``record_step`` writes this product's own.
         **params
             Extra provenance parameters.
 
         Returns
         -------
-        str
-            Path of the stacked cube. Per-cycle files are written beside it when
-            ``save_cycle_files`` is set.
+        list of str
+            The paths written, in cycle order.
         """
         cubes = np.asarray(cubes)
-        base = header if header is not None else (
-            cycles[0][0].header if cycles else None)
-
-        stacked = self._save(cubes, base, "stokes_cycles",
-                             step="stokes cubes per HWP cycle",
-                             ncycles=len(cubes), axes="(cycle, [I,Q,U], y, x)",
-                             **params)
+        folder = os.path.join(self.output_dir, f"{self.target}_stokes_cycles")
+        os.makedirs(folder, exist_ok=True)
 
         cycle_paths = []
-        if self.save_cycle_files:
-            folder = os.path.join(self.output_dir,
-                                  f"{self.target}_stokes_cycles")
-            os.makedirs(folder, exist_ok=True)
-            for i, cube in enumerate(cubes):
-                hdr = (cycles[i][0].header.copy() if cycles
-                       else (base.copy() if base is not None else None))
-                frame = Frame(cube, hdr)
-                record_step(frame, "stokes cube for one HWP cycle",
-                            cycle=i, axes="([I,Q,U], y, x)", **params)
-                frame["POLCYCLE"] = (i, "HWP cycle index")
-                frame["PRODUCT"] = ("stokes_cycle", "NIRC2Pol-DPP product type")
-                out = os.path.join(folder, f"{self.target}_stokes_cycle_"
-                                           f"{i:03d}.fits")
-                frame.save(out, overwrite=self.overwrite)
-                cycle_paths.append(out)
-            log.info("wrote %d per-cycle Stokes cubes to %s",
-                     len(cycle_paths), folder)
-        return stacked, cycle_paths
+        for i, cube in enumerate(cubes):
+            if cycles:
+                hdr = cycles[i][0].header.copy()
+                for card in (header.cards if header is not None else ()):
+                    key = card.keyword
+                    if key and key not in ("HISTORY", "COMMENT") \
+                            and key not in hdr:
+                        hdr[key] = (card.value, card.comment)
+            else:
+                hdr = header.copy() if header is not None else None
+
+            frame = Frame(cube, hdr)
+            record_step(frame, "stokes cube for one HWP cycle",
+                        cycle=i, ncycles=len(cubes),
+                        axes="([I,Q,U], y, x)", **params)
+            frame["POLCYCLE"] = (i, "HWP cycle index")
+            frame["POLNCYC"] = (len(cubes), "HWP cycles in this reduction")
+            frame["PRODUCT"] = ("stokes_cycle", "NIRC2Pol-DPP product type")
+            out = os.path.join(folder,
+                               f"{self.target}_stokes_cycle_{i:03d}.fits")
+            frame.save(out, overwrite=self.overwrite)
+            cycle_paths.append(out)
+
+        log.info("wrote %d per-cycle Stokes cubes to %s",
+                 len(cycle_paths), folder)
+        return cycle_paths
 
     # -- final products ----------------------------------------------------
 

@@ -282,12 +282,10 @@ def run(cfg, config_path=None):
     writer = ProductWriter(paths.sequences_folder, target=cfg.target)
 
     # save_individual_cycles decides whether the per-cycle Stokes data is
-    # kept at all. Both forms go together or stay together: the stacked
-    # (ncycles, [I,Q,U], y, x) cube and the one-file-per-cycle folder hold
-    # the same pixels, and differ only in that each per-cycle file carries
-    # its own cycle header -- the PARANG, EL and ROTPDEST of that cycle --
-    # where the stacked cube carries only the first cycle's. Off, the median
-    # cube and the derived products are all that is written.
+    # kept: one FITS per cycle, each carrying its own cycle's header. Off,
+    # the median cube and the derived products are all that is written, and
+    # no cycle can be dropped or re-combined without reducing the night
+    # again.
     if cfg.save_individual_cycles:
         writer.save_stokes_cycles(stokes_cubes, cycles, header=header)
     writer.save_median_stokes(median_cube, header=header)
