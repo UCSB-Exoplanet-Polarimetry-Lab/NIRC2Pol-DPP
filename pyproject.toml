@@ -45,6 +45,7 @@ examples = ["matplotlib>=3.8,<4", "ipykernel"]
 
 [project.scripts]
 nirc2pol-reduce = "nirc2pol.cli:main"
+nirc2pol-combine = "nirc2pol.cli:main_combine"
 
 [project.urls]
 Homepage = "https://github.com/UCSB-Exoplanet-Polarimetry-Lab/NIRC2Pol-DPP"
