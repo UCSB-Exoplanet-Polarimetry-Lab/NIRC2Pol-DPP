@@ -384,6 +384,77 @@ def subtract_mean_background(data, box=None):
     return data
 
 
+def background_stages(method):
+    """Normalise a background setting into an ordered tuple of stages.
+
+    Parameters
+    ----------
+    method : str or None or sequence
+        One stage (``"dither"``), several in the order they are applied
+        (``["dither", "annulus"]``), or None for no subtraction.
+
+    Returns
+    -------
+    tuple
+        The stages. ``()`` when nothing is to be done.
+
+    Raises
+    ------
+    ValueError
+        If a stage is repeated, if None is mixed with real stages, or if
+        ``"dither"`` is present but not first.
+
+    Notes
+    -----
+    Chaining exists because the two kinds of subtraction do different jobs.
+    ``dither`` differences two exposures taken seconds apart, which removes
+    the thermal pedestal *and its structure* -- the only thing that can, at
+    L-prime. What it leaves is a residual, because the sky did change a
+    little between the two, and that residual is a roughly constant offset
+    per beam. ``annulus`` or ``mean_box`` after it removes that.
+
+    The residual is small and matters anyway. On the 2025-12-06 standard,
+    after a clean dither subtraction, U still carried a detector-scale
+    gradient worth +22 ADU/px at the star -- nothing beside a 1.2e5 core,
+    but an annulus at r=60-80 holds ~9000 pixels and sums it into more
+    signal than the star has out there, which ran the measured polarization
+    from 0.9% to 4.1%.
+
+    ``"dither"`` must come first because it is not a beam-level operation at
+    all: it happens in :func:`nirc2pol.polmode.run`, on whole frames, before
+    the beams are cut out. Writing it anywhere else would describe an order
+    that cannot happen, so that is an error rather than a silent
+    reordering.
+    """
+    if method is None:
+        return ()
+    if isinstance(method, str):
+        stages = (method,)
+    else:
+        stages = tuple(method)
+
+    if not stages:
+        return ()
+    if any(s is None for s in stages):
+        if len(stages) > 1:
+            raise ValueError(
+                f"background_method {list(stages)!r} mixes none with real "
+                "stages. Use none on its own to mean no subtraction, or list "
+                "only the stages you want.")
+        return ()
+    if len(set(stages)) != len(stages):
+        raise ValueError(
+            f"background_method {list(stages)!r} repeats a stage. Running "
+            "one twice removes nothing the first pass left.")
+    if "dither" in stages and stages[0] != "dither":
+        raise ValueError(
+            f"background_method {list(stages)!r} puts 'dither' after another "
+            "stage, but dither is applied to whole frames before the beams "
+            "are cut out, so it always runs first. Write it first, or drop "
+            "it.")
+    return stages
+
+
 def subtract_background(stack, method, box=None, annulus=None):
     """Apply the background subtraction named by ``method``.
 
@@ -391,8 +462,9 @@ def subtract_background(stack, method, box=None, annulus=None):
     ----------
     stack : ndarray
         Image or beam stack to correct.
-    method : {"mean_box", "annulus", "dither", None}
-        Which subtraction to apply. None returns the input untouched, which
+    method : str or None or sequence
+        Which subtraction to apply, or several in order -- see
+        :func:`background_stages`. None returns the input untouched, which
         is how a caller says the omission is deliberate.
     box : tuple of int, optional
         ``(ylow, yhigh, xlow, xhigh)`` for ``"mean_box"``.
@@ -413,30 +485,29 @@ def subtract_background(stack, method, box=None, annulus=None):
     Notes
     -----
     ``"dither"`` is a no-op here by design: dither pairs are differenced at
-    frame level by :func:`subtract_dither_pairs`, before the beams are cut
-    out, so there is nothing left to do per beam.
+    frame level by :func:`subtract_dither_background`, before the beams are
+    cut out, so there is nothing left to do per beam. It is still accepted
+    here, and still worth naming in a chain, so that one setting describes
+    the whole background treatment rather than half of it.
 
     Every sky subtraction the pipeline knows about is in this module,
     including the choice between them. Instruments carry which method to use
     and its parameters, since those are per-dataset settings, but none of
     them implements a subtraction.
     """
-    if method is None:
-        return stack
-
-    if method == "mean_box":
-        if box is None:
-            raise ValueError("background method 'mean_box' requires "
-                             "box=(ylow, yhigh, xlow, xhigh)")
-        return subtract_mean_background(stack, box=box)
-
-    if method == "annulus":
-        if annulus is None:
-            raise ValueError("background method 'annulus' requires "
-                             "annulus=(r_inner, r_outer)")
-        return subtract_annulus_background(stack, *annulus)
-
-    if method == "dither":
-        return stack
-
-    raise ValueError(f"Unknown background method {method!r}")
+    for stage in background_stages(method):
+        if stage == "mean_box":
+            if box is None:
+                raise ValueError("background method 'mean_box' requires "
+                                 "box=(ylow, yhigh, xlow, xhigh)")
+            stack = subtract_mean_background(stack, box=box)
+        elif stage == "annulus":
+            if annulus is None:
+                raise ValueError("background method 'annulus' requires "
+                                 "annulus=(r_inner, r_outer)")
+            stack = subtract_annulus_background(stack, *annulus)
+        elif stage == "dither":
+            continue          # done at frame level, before the beams are cut
+        else:
+            raise ValueError(f"Unknown background method {stage!r}")
+    return stack

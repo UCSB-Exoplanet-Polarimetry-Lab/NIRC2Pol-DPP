@@ -97,7 +97,9 @@ class PolarimetryData(ABC):
     #
     # On-sky data must configure this
     # Recommended by band: L uses dither pairs or a mean box; JHK use an annulus around the source or a mean box.
-    background_method = "mean_box"   # "mean_box" | "annulus" | "dither" | None
+    # one stage, or several in order: ["dither", "annulus"]. See
+    # nirc2pol.reduction.sky.background_stages.
+    background_method = "mean_box"
     background_box = None                 # (ylow, yhigh, xlow, xhigh)
     background_annulus = None             # (r_inner, r_outer) in pixels
 
@@ -148,7 +150,10 @@ class PolarimetryData(ABC):
         with no box, because saying it once per instrument needs the
         ``_warned_*`` flag that :meth:`reset_warnings` clears.
         """
-        if self.background_method == "mean_box" and self.background_box is None:
+        from nirc2pol.reduction.sky import background_stages
+
+        stages = background_stages(self.background_method)
+        if "mean_box" in stages and self.background_box is None:
             if not type(self)._warned_no_background:
                 log.warning(
                     "%s has background_method='mean_box' but no "
@@ -198,14 +203,27 @@ class PolarimetryData(ABC):
         return ""
 
     def describe_background(self):
-        """One-line description of the background setting, for provenance."""
-        if self.background_method is None:
+        """One-line description of the background setting, for provenance.
+
+        Names every stage in the order applied, so a product records the
+        whole background treatment rather than the first half of it.
+        """
+        from nirc2pol.reduction.sky import background_stages
+
+        stages = background_stages(self.background_method)
+        if not stages:
             return "none"
-        if self.background_method == "mean_box":
-            return f"mean_box{self.background_box}"
-        if self.background_method == "dither":
-            return "dither pairs (frame level)"
-        return f"annulus{self.background_annulus}"
+        described = []
+        for stage in stages:
+            if stage == "mean_box":
+                described.append(f"mean_box{self.background_box}")
+            elif stage == "annulus":
+                described.append(f"annulus{self.background_annulus}")
+            elif stage == "dither":
+                described.append("dither pairs (frame level)")
+            else:
+                described.append(str(stage))
+        return " then ".join(described)
 
     #
     # detector properties

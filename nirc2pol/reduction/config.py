@@ -284,7 +284,7 @@ class ReductionConfig(TomlConfig):
         "selection")
 
     # ---- background ---------------------------------------------------
-    background_method: str = config_field(
+    background_method: object = config_field(
         None,
         "How the sky/thermal background is removed, per Wollaston beam, "
         "inside the Stokes builder.\n"
@@ -299,12 +299,28 @@ class ReductionConfig(TomlConfig):
         "the data.\n"
         "  none       leave it in.\n"
         "\n"
+        "Several may be chained, in the order applied, e.g.\n"
+        "  background_method = [\"dither\", \"annulus\"]\n"
+        "\n"
+        "That combination is the one to reach for at L'. The dither removes "
+        "the thermal pedestal AND its structure, which nothing else can, "
+        "but it leaves a residual because the sky changed a little between "
+        "the two exposures -- roughly a constant offset per beam. The "
+        "annulus (or mean_box) then takes that out. On the 2025-12-06 "
+        "standard the leftover was worth +22 ADU/px in U at the star, "
+        "which is nothing beside a 1.2e5 core but sums over a 9000 px "
+        "annulus into more signal than the star has out there.\n"
+        "\n"
+        "dither must be listed first if present: it runs on whole frames "
+        "before the beams are cut out, so any other order is refused rather "
+        "than quietly rearranged.\n"
+        "\n"
         "L'/M want dither or mean_box, where the thermal background "
         "dominates; JHK want annulus or mean_box. Defaults to none because "
         "the right answer depends on the band and the data, and the region "
         "a box or annulus uses cannot be guessed -- a choice to make, not "
         "one to inherit. On-sky data almost always needs one.",
-        "background", choices=BACKGROUND_METHODS)
+        "background")
     dither_tolerance: float = config_field(
         2.0,
         "How far apart two pointings may be and still count as the same "
@@ -582,14 +598,25 @@ class ReductionConfig(TomlConfig):
             raise ValueError(
                 "fast_axis_method = 'fixed' uses theta_off, which is not set.")
 
-        if self.background_method == "mean_box" and not self.background_box:
+        # background_method may name several stages, so it is validated by
+        # background_stages rather than by the enumerated-choices loop above.
+        from nirc2pol.reduction.sky import background_stages
+
+        stages = background_stages(self.background_method)
+        for stage in stages:
+            if stage not in BACKGROUND_METHODS:
+                raise ValueError(
+                    f"background_method stage {stage!r} is not one of "
+                    f"{[m for m in BACKGROUND_METHODS if m]}.")
+        if "mean_box" in stages and not self.background_box:
             raise ValueError(
-                "background_method = 'mean_box' needs background_box, "
-                "[ylow, yhigh, xlow, xhigh] over a source-free region.")
-        if self.background_method == "annulus" and not self.background_annulus:
+                "background_method includes 'mean_box', which needs "
+                "background_box, [ylow, yhigh, xlow, xhigh] over a "
+                "source-free region.")
+        if "annulus" in stages and not self.background_annulus:
             raise ValueError(
-                "background_method = 'annulus' needs background_annulus, "
-                "[r_inner, r_outer].")
+                "background_method includes 'annulus', which needs "
+                "background_annulus, [r_inner, r_outer].")
 
     # ------------------------------------------------------------------
     def default_config_path(self):

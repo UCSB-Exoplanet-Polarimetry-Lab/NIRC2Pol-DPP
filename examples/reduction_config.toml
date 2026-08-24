@@ -64,6 +64,22 @@ select_frame_range = "none"
 #       the data.
 #   none       leave it in.
 #
+# Several may be chained, in the order applied, e.g.
+#   background_method = ["dither", "annulus"]
+#
+# That combination is the one to reach for at L'. The dither removes the
+# thermal pedestal AND its structure, which nothing else can, but it
+# leaves a residual because the sky changed a little between the two
+# exposures -- roughly a constant offset per beam. The annulus (or
+# mean_box) then takes that out. On the 2025-12-06 standard the leftover
+# was worth +22 ADU/px in U at the star, which is nothing beside a 1.2e5
+# core but sums over a 9000 px annulus into more signal than the star has
+# out there.
+#
+# dither must be listed first if present: it runs on whole frames before
+# the beams are cut out, so any other order is refused rather than quietly
+# rearranged.
+#
 # L'/M want dither or mean_box, where the thermal background dominates;
 # JHK want annulus or mean_box. Defaults to none because the right answer
 # depends on the band and the data, and the region a box or annulus uses
@@ -174,9 +190,14 @@ sky_group_gap = 30.0
 sky_max_radius = 600.0
 
 [geometry]
-# Beam geometry, if you are overriding it. none measures it from the data,
-# which is the intended path -- the separation moves between epochs and a
-# stale value fails silently. [px]
+# Where split_beams cuts the top beam out, if you are overriding it. none
+# uses the nominal value for the band, which is the intended path.
+#
+# This is NOT a calibration and does not need to be exact. Whatever offset
+# the cut leaves between the two beams is measured and removed per frame
+# by align_beams during registration. Set it only if a beam is being cut
+# off entirely -- which would mean the band is missing from the
+# [beam_geometry] table in nirc2.toml. [px]
 beam_top_row = "none"
 
 # See beam_top_row. [px]

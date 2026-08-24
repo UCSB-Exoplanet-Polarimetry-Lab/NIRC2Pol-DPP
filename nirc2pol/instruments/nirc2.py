@@ -752,21 +752,33 @@ def check_background_choice(band, method):
     ----------
     band : str
         Observing band, e.g. from :func:`band_of`.
-    method : str or None
-        Background method being used.
+    method : str or None or sequence
+        Background method, or a chain of them.
 
     Returns
     -------
     bool
         True if the choice is recommended for the band. Unknown bands and a
         None method pass, since there is nothing to advise.
+
+    Notes
+    -----
+    A chain passes if *any* stage is recommended. A second pass is there to
+    clean up after the first, so judging it against the same table would
+    complain about ``["dither", "annulus"]`` at L-prime -- which is the
+    combination worth using -- purely because annulus alone would be wrong
+    there.
     """
+    from nirc2pol.reduction.sky import background_stages
+
     rec = RECOMMENDED_BACKGROUND.get(str(band).strip())
-    if rec is None or method is None:
+    stages = background_stages(method)
+    if rec is None or not stages:
         return True
-    if method not in rec:
-        log.warning("Background method %r is not recommended for %s band "
-                    "(use one of %s)", method, band, " or ".join(rec))
+    if not any(stage in rec for stage in stages):
+        log.warning("Background method %s is not recommended for %s band "
+                    "(use one of %s)",
+                    " then ".join(map(str, stages)), band, " or ".join(rec))
         return False
     return True
 

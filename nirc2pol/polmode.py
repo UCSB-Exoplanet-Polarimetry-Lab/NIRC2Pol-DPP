@@ -51,9 +51,10 @@ from nirc2pol.polarimetry import (ProductWriter, apply_mueller_model,
                                   build_stokes_cubes, fit_ip_uphi,
                                   fit_ip_uphi_all, mean_ip,
                                   fit_fast_axis_butterfly, median_stokes_cube)
-from nirc2pol.reduction import (make_master_darks, make_master_flats,
-                                make_master_masks, make_master_skies,
-                                reduce_frame, subtract_dither_background)
+from nirc2pol.reduction import (background_stages, make_master_darks,
+                                make_master_flats, make_master_masks,
+                                make_master_skies, reduce_frame,
+                                subtract_dither_background)
 from nirc2pol.utils import (ObslogPaths, load_frames, load_rejects,
                             read_headers, save_frames, select_frames,
                             start_reduction_log)
@@ -248,7 +249,10 @@ def run(cfg, config_path=None):
     # At frame level, before the Wollaston beams are cut out, and pair-matched
     # within one HWP angle so it differences two skies rather than two
     # polarization states.
-    if cfg.background_method == "dither":
+    #
+    # Any other stage in the chain -- annulus, mean_box -- runs later and per
+    # beam, inside the Stokes builder, on what this leaves behind.
+    if "dither" in background_stages(cfg.background_method):
         reduced_frames = subtract_dither_background(
             reduced_frames, instrument,
             tolerance_arcsec=cfg.dither_tolerance)

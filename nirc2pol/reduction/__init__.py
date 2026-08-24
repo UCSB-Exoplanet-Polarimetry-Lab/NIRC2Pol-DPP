@@ -26,6 +26,7 @@ from .calibrate import (
 )
 from .sky import (
     subtract_annulus_background,
+    background_stages,
     subtract_background,
     subtract_dither_background,
     subtract_dither_pairs,
@@ -98,6 +99,7 @@ __all__ = [
     "required_flat_type_for",
     "split_polarimetric_flats",
     "subtract_annulus_background",
+    "background_stages",
     "subtract_background",
     "subtract_dither_background",
     "subtract_dither_pairs",
