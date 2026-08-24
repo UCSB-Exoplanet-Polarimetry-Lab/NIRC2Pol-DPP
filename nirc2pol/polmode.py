@@ -88,6 +88,13 @@ def run(cfg, config_path=None):
     # override a method, describe a night the base class cannot.
     instrument = cfg.configure(nirc2.NIRC2PolarimetryData())
     paths = ObslogPaths(cfg.observations_root, cfg.date)
+
+    # Find the frames before anything is created or written. A mistyped date
+    # or a wrong root should fail saying which folder it looked in, not leave
+    # a tree of empty folders and a log file behind as the only evidence of a
+    # reduction that never happened.
+    raw_files = paths.raw_files(frame_range=cfg.raw_range)
+
     paths.make_folders()
     # Frames excluded from every run of this night, each with a reason. Add one
     # with:
@@ -109,13 +116,11 @@ def run(cfg, config_path=None):
                  instrument.top_row_start, instrument.beam_x_offset)
 
     # --- 1. sort raw frames by type ------------------------------------------
-    # cfg.raw_range narrows what is read off disk at all. Distinct from
-    # select_frame_range, which picks the science frames: this has to stay
-    # wide enough to include the darks and flats, or the masters cannot be
-    # built. raw_files raises on an empty night, or on a range that excluded
-    # everything, rather than letting a reduction with no frames in it carry
-    # on and fail somewhere that cannot say what was wrong.
-    raw_files = paths.raw_files(frame_range=cfg.raw_range)
+    # The frames were found above. cfg.raw_range has already narrowed them:
+    # that is what is read off disk at all, and is distinct from
+    # select_frame_range, which picks the science frames -- raw_range has to
+    # stay wide enough to include the darks and flats, or the masters cannot
+    # be built.
     log.info("%d raw file(s) in %s", len(raw_files), paths.raw_folder)
     sorted_files = instrument.sort_frames(raw_files)
 

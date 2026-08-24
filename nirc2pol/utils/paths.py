@@ -211,9 +211,17 @@ class ObslogPaths:
         return found
 
     def make_folders(self):
-        """Create the night's subfolders, leaving any that already exist."""
-        for folder in (self.raw_folder, self.reduced_folder,
-                       self.plots_folder, self.sequences_folder):
+        """Create the folders this reduction *writes* to.
+
+        ``raw_folder`` is deliberately not among them. It is an input: the
+        frames are either in it already or they are not, so creating it can
+        only ever produce an empty directory -- and that manufactures the
+        very folder :meth:`raw_files` is about to report as empty, hiding a
+        mistyped date or a wrong root behind a directory this call made
+        itself.
+        """
+        for folder in (self.reduced_folder, self.plots_folder,
+                       self.sequences_folder):
             os.makedirs(folder, exist_ok=True)
 
 
