@@ -59,11 +59,54 @@ listing every option with its default and its allowed values:
 nirc2pol-reduce --template > my_night.toml
 ```
 
-Edit it -- at minimum `observations_root`, `date` and `target` -- then run it:
+Edit it -- at minimum these four -- then run it:
+
+```toml
+[paths]
+raw_data_folder = "/data/NIRC2_Pol/20251207"   # where the frames are
+reductions_root = "/home/you/reductions/AB_Aur_Lp"  # where this run goes
+date            = "2025-12-08"                 # UTC, as DATE-OBS records it
+target          = "AB_Aur"
+```
 
 ```
 nirc2pol-reduce my_night.toml
 ```
+
+Those first two are deliberately separate. The frames stay wherever they are
+-- an archive, shared space, a mounted volume -- and are only ever read; the
+run symlinks the ones it needs into `reductions_root/raw/` and writes
+everything else there too, so a reduction folder is a self-contained record of
+its own inputs and nothing is written back into the data:
+
+```
+reductions_root/
+    raw/          symlinks to the frames this run read
+    reduced/      dark-subtracted, flat-divided frames
+    sequences/    per-cycle Stokes cubes, median cube, PI / AoLP / DoLP,
+                  Q_phi / U_phi
+    plots/
+    master_darks_<date>.fits, master_flats_<date>.fits
+    reduction_<date>.log
+```
+
+`date` locates nothing: it names the masters and the log, and is checked
+against the frames' own `DATE-OBS`.
+
+## Combining several nights
+
+Reduce each night on its own, then join the results:
+
+```
+nirc2pol-combine --template > combined.toml
+nirc2pol-combine combined.toml
+```
+
+It median-combines the per-cycle Stokes cubes of the reductions you list. The
+join happens *after* reduction rather than before, so that each night keeps
+its own darks, flats and beam geometry -- pooling raw frames from two nights
+would let one night's flat calibrate the other night's data, since flats are
+matched on filter and detector size and not on date.
 
 The same reduction is one call from a notebook, which returns everything it
 built so you can look at any of it:
