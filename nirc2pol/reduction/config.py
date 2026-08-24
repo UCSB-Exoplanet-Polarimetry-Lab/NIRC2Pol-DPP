@@ -41,6 +41,7 @@ RENAMED_OPTIONS = {
 BACKGROUND_METHODS = ("mean_box", "annulus", "dither", None)
 REGISTER_METHODS = ("smooth_peak", "quantile_peak", "max", "min", "gaussian",
                     "centroid", "silhouette", "symmetry", "wings", "crosscorr")
+FLAT_TYPES = ("SKY", "DOME", None)
 FAST_AXIS_METHODS = ("mm_model", "butterfly", "fixed")
 IP_METHODS = ("mm_model", "fit_uphi_per_cycle", "fit_uphi_all", None)
 
@@ -309,6 +310,27 @@ class ReductionConfig(TomlConfig):
         "background", unit="px")
     background_annulus: list = config_field(
         None, "[r_inner, r_outer] for annulus.", "background", unit="px")
+    required_flat_type: str = config_field(
+        None,
+        "Override which KIND of flat this band requires -- SKY (twilight) or "
+        "DOME (the dome screen). The instrument sets this per band already: "
+        "sky at L'/M, where the dome lamp is swamped by the thermal "
+        "background, and dome at JHK. none keeps that rule.\n"
+        "\n"
+        "Reducing with the wrong kind gives a wrong answer that still looks "
+        "reasonable, so the rule is enforced rather than preferred -- a "
+        "mismatch raises. Set this when you have a considered reason, such "
+        "as sky flats being the only usable ones you took in JHK.",
+        "flats", choices=FLAT_TYPES)
+    allow_flat_without_dark: bool = config_field(
+        False,
+        "Build a master flat even when no dark matches its exposure, "
+        "tagging it +NODARK. Off by default: a flat still holding its dark "
+        "current is not a flat field -- the pedestal survives normalization "
+        "and divides into every science frame. Turn it on only when the "
+        "matching darks genuinely do not exist and you would rather have "
+        "the flat than nothing.",
+        "flats")
     use_master_skies: bool = config_field(
         False,
         "Subtract dedicated master sky frames. Off by default: combined with "

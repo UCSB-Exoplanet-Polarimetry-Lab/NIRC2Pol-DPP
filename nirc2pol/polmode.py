@@ -148,6 +148,8 @@ def run(cfg, config_path=None):
         load_frames(sorted_files["flats_sky"], rejects=rejects),
         master_darks,
         instrument=instrument,
+        required_flat_type=cfg.required_flat_type,
+        allow_flat_without_dark=cfg.allow_flat_without_dark,
     )
     if master_flats and cfg.save_preproc:
         save_frames(paths.flats_file, master_flats)
@@ -179,6 +181,10 @@ def run(cfg, config_path=None):
             bad_pixel_mask=bad_pixel_mask,
             required_flat_types=instrument.required_flat_types,
             default_required_flat_type=instrument.default_required_flat_type,
+            # The same override as the masters were built with: choosing the
+            # kind for the build and then enforcing the band default when
+            # matching would refuse the flats it had just made.
+            required_flat_type=cfg.required_flat_type,
             gain=instrument.gain(frame),
             saturation_limit=instrument.saturation_limit(frame),
         )

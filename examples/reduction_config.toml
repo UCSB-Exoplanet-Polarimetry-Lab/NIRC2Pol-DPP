@@ -81,6 +81,26 @@ background_annulus = "none"
 # mean-box or annulus background it removes the pedestal twice.
 use_master_skies = false
 
+[flats]
+# Override which KIND of flat this band requires -- SKY (twilight) or DOME
+# (the dome screen). The instrument sets this per band already: sky at
+# L'/M, where the dome lamp is swamped by the thermal background, and dome
+# at JHK. none keeps that rule.
+#
+# Reducing with the wrong kind gives a wrong answer that still looks
+# reasonable, so the rule is enforced rather than preferred -- a mismatch
+# raises. Set this when you have a considered reason, such as sky flats
+# being the only usable ones you took in JHK.
+# choices: 'SKY', 'DOME', none
+required_flat_type = "none"
+
+# Build a master flat even when no dark matches its exposure, tagging it
+# +NODARK. Off by default: a flat still holding its dark current is not a
+# flat field -- the pedestal survives normalization and divides into every
+# science frame. Turn it on only when the matching darks genuinely do not
+# exist and you would rather have the flat than nothing.
+allow_flat_without_dark = false
+
 [geometry]
 # Beam geometry, if you are overriding it. none measures it from the data,
 # which is the intended path -- the separation moves between epochs and a
