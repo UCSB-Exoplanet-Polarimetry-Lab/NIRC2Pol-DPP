@@ -305,6 +305,18 @@ class ReductionConfig(TomlConfig):
         "a box or annulus uses cannot be guessed -- a choice to make, not "
         "one to inherit. On-sky data almost always needs one.",
         "background", choices=BACKGROUND_METHODS)
+    dither_tolerance: float = config_field(
+        2.0,
+        "How far apart two pointings may be and still count as the same "
+        "dither position -- used ONLY when a frame has no RAOFF/DECOFF and "
+        "the actual RA/DEC has to be used instead. Commanded offsets carry "
+        "no jitter, so they are compared exactly.\n"
+        "\n"
+        "Keep this well BELOW the dither throw. A throw is only a few arcsec "
+        "-- 3.0 on the 2025-12-06 L' data -- and a tolerance near it merges "
+        "the two positions into one, leaving nothing to subtract. That is "
+        "raised rather than passed over.",
+        "background", unit="arcsec")
     background_box: list = config_field(
         None,
         "[ylow, yhigh, xlow, xhigh] for mean_box, in a source-free corner.",
@@ -520,6 +532,16 @@ class ReductionConfig(TomlConfig):
         "and U about an arbitrary point, and Q_phi is not a measurement of "
         "anything. Turn it on for a disk, where U_phi is also the null "
         "channel worth judging the reduction by.",
+        "products")
+    dolp_min_intensity: float = config_field(
+        0.001,
+        "DoLP is written as NaN wherever |I| is below this fraction of the "
+        "peak. DoLP is PI/I, so where I approaches zero -- most of a frame, "
+        "once the background is gone -- it divides noise by noise and runs "
+        "to enormous values that leave any display scaled by them showing "
+        "nothing. Nothing is hidden: a ratio at I close to 0 carried no "
+        "information. Raise it for a faint source, or set 0 to divide "
+        "everywhere.",
         "products")
     save_individual_cycles: bool = config_field(
         True,

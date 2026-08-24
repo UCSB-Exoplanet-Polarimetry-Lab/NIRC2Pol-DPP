@@ -71,6 +71,17 @@ select_frame_range = "none"
 # almost always needs one.
 background_method = "none"
 
+# How far apart two pointings may be and still count as the same dither
+# position -- used ONLY when a frame has no RAOFF/DECOFF and the actual
+# RA/DEC has to be used instead. Commanded offsets carry no jitter, so
+# they are compared exactly.
+#
+# Keep this well BELOW the dither throw. A throw is only a few arcsec --
+# 3.0 on the 2025-12-06 L' data -- and a tolerance near it merges the two
+# positions into one, leaving nothing to subtract. That is raised rather
+# than passed over. [arcsec]
+dither_tolerance = 2.0
+
 # [ylow, yhigh, xlow, xhigh] for mean_box, in a source-free corner. [px]
 background_box = "none"
 
@@ -262,6 +273,14 @@ save_derived_quantities = true
 # for a disk, where U_phi is also the null channel worth judging the
 # reduction by.
 save_radial_stokes = false
+
+# DoLP is written as NaN wherever |I| is below this fraction of the peak.
+# DoLP is PI/I, so where I approaches zero -- most of a frame, once the
+# background is gone -- it divides noise by noise and runs to enormous
+# values that leave any display scaled by them showing nothing. Nothing is
+# hidden: a ratio at I close to 0 carried no information. Raise it for a
+# faint source, or set 0 to divide everywhere.
+dolp_min_intensity = 0.001
 
 # Keep the per-cycle Stokes cubes -- one FITS per HWP cycle in
 # <target>_stokes_cycles/, each carrying its own cycle's header. Off, the

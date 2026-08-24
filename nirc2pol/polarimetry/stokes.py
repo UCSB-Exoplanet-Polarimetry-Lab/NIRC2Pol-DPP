@@ -420,18 +420,49 @@ def median_stokes_cube(stokes_cubes):
     return np.nanmedian(np.asarray(stokes_cubes), axis=0)
 
 
-def polarization_products(stokes_cube):
-    """Derived quantities from a ``(3, ny, nx)`` Stokes cube [I, Q, U]:
+def polarization_products(stokes_cube, min_intensity_frac=0.001):
+    """Derived quantities from a ``(3, ny, nx)`` Stokes cube [I, Q, U].
 
-    Returns ``(PI, AoLP, DoLP)`` — polarized intensity ``sqrt(Q^2 + U^2)``,
-    angle of linear polarization ``0.5 * arctan2(U, Q)`` [deg], and degree
-    of linear polarization ``PI / I``.
+    Parameters
+    ----------
+    stokes_cube : ndarray
+        ``(3, ny, nx)`` as ``[I, Q, U]``.
+    min_intensity_frac : float, optional
+        DoLP is NaN wherever ``|I|`` is below this fraction of ``max(I)``.
+        Set to 0 to divide everywhere.
+
+    Returns
+    -------
+    tuple of ndarray
+        ``(PI, AoLP, DoLP)`` -- polarized intensity ``sqrt(Q^2 + U^2)``,
+        angle of linear polarization ``0.5 * arctan2(U, Q)`` in degrees, and
+        degree of linear polarization ``PI / I``.
+
+    Notes
+    -----
+    Only DoLP is masked, because only DoLP is a ratio. Where ``I`` approaches
+    zero -- which is most of a frame once the background is subtracted -- it
+    divides noise by noise and runs away: on a real L' standard-star frame it
+    spanned -2.0e6 to +9.6e5, with 3.7% of pixels exceeding 100%
+    polarization, which leaves any display scaled by those extremes showing
+    nothing at all.
+
+    Masking hides no information, since a ratio at ``I ~ 0`` had none. The
+    absolute value is used deliberately: a pixel where ``I`` came out
+    negative from noise is exactly as unusable a denominator as one near
+    zero.
     """
     I, Q, U = stokes_cube
     pi = np.sqrt(Q**2 + U**2)
     aolp = 0.5 * np.degrees(np.arctan2(U, Q))
     with np.errstate(divide="ignore", invalid="ignore"):
         dolp = pi / I
+
+    if min_intensity_frac:
+        peak = np.nanmax(I)
+        if np.isfinite(peak) and peak > 0:
+            dolp = np.where(np.abs(I) < min_intensity_frac * peak,
+                            np.nan, dolp)
     return pi, aolp, dolp
 
 

@@ -226,7 +226,8 @@ class ProductWriter:
                           step="median-combined Stokes cube", **params)
 
     def save_derived_products(self, cube, header=None, center=None,
-                              derived=True, radial=True, **params):
+                              derived=True, radial=True,
+                              dolp_min_intensity=0.001, **params):
         """Write the products derived from a ``(3, ny, nx)`` Stokes cube.
 
         Two families, separately switchable, because they answer different
@@ -248,6 +249,9 @@ class ProductWriter:
             mean something only when the light is scattered from something
             at that centre -- a disk. For a point source, a standard star,
             they are a rotation of Q and U about an arbitrary point.
+        dolp_min_intensity : float, optional
+            DoLP is NaN below this fraction of peak I; see
+            :func:`nirc2pol.polarimetry.stokes.polarization_products`.
         **params
             Extra provenance parameters.
 
@@ -261,7 +265,8 @@ class ProductWriter:
         cube = np.asarray(cube)
         wanted = []
         if derived:
-            pi, aolp, dolp = polarization_products(cube)
+            pi, aolp, dolp = polarization_products(
+                cube, min_intensity_frac=dolp_min_intensity)
             wanted += [
                 ("PI", pi, "polarized intensity sqrt(Q^2+U^2)", {}),
                 ("AoLP", aolp, "angle of linear polarization 0.5*atan2(U,Q)",

@@ -7,15 +7,18 @@ workflow in order:
     2. build master darks / flats / skies
     3. choose the science frames this reduction covers
     4. pre-process them (dark, flat, bad pixels)
-    5. measure the beam geometry, then HWP cycle matching
-    6. fast axis offset (cfg.fast_axis_method) and instrumental polarization
+    5. measure the beam geometry -- before any dither subtraction, which
+       would leave a negative image of the star for the centroid to find
+    6. dither subtraction, when cfg.background_method asks for it
+    7. HWP cycle matching
+    8. fast axis offset (cfg.fast_axis_method) and instrumental polarization
        (cfg.ip_method), chosen independently -- the butterfly fit settles the
        offset only
-    7. Stokes cubes per cycle -- beam splitting, background subtraction,
+    9. Stokes cubes per cycle -- beam splitting, background subtraction,
        registration (cfg.register_method) and double differencing all happen
        inside the builder
-    8. median Stokes cube, PI / AoLP / DoLP and radial Stokes, written with
-       full provenance by ``ProductWriter``
+    10. median Stokes cube, PI / AoLP / DoLP and radial Stokes, written with
+        full provenance by ``ProductWriter``
 
 ``nirc2pol-reduce night.toml`` is this function with a command line around
 it. Calling it directly is the same reduction, and it hands back everything
@@ -50,7 +53,8 @@ from nirc2pol.polarimetry import (ProductWriter, apply_mueller_model,
                                   fit_fast_axis_butterfly, median_stokes_cube)
 from nirc2pol.reduction import (fit_beam_geometry, make_master_darks,
                                 make_master_flats, make_master_masks,
-                                make_master_skies, reduce_frame)
+                                make_master_skies, reduce_frame,
+                                subtract_dither_background)
 from nirc2pol.utils import (ObslogPaths, load_frames, load_rejects,
                             read_headers, save_frames, select_frames,
                             start_reduction_log)
@@ -223,25 +227,48 @@ def run(cfg, config_path=None):
             gain=instrument.gain(frame),
             saturation_limit=instrument.saturation_limit(frame),
         )
-        if cfg.save_preproc:
-            reduced.save(os.path.join(paths.reduced_folder, reduced["RED-FN"]))
         reduced_frames.append(reduced)
 
-    # --- 5. HWP cycle matching ----------------------------------------------
-    # Measure where the two beams sit, from these frames. The separation moves
-    # between epochs, so it is measured every time rather than looked up: a
-    # value written down once goes stale without saying so. Nothing downstream
-    # can undo a wrong one -- registration shifts both beams together -- so
-    # split_beams refuses until this has run.
+    # --- 5. beam geometry, measured before any dither subtraction ------------
+    # Where the two beams sit. The separation moves between epochs, so it is
+    # measured every time rather than looked up: a value written down once
+    # goes stale without saying so. Nothing downstream can undo a wrong one --
+    # registration shifts both beams together -- so split_beams refuses until
+    # this has run.
+    #
+    # Before the dither, deliberately. A dither-subtracted frame carries a
+    # NEGATIVE image of the star a few arcsec from the positive one, and the
+    # centroid cannot tell them apart: on the 2025-12-06 standard it measured
+    # beam_x_offset 29.64 with 102 px of scatter, where the same frames
+    # before subtraction give 12.13 with 0.01 px. Geometry is a property of
+    # the optics, so measure it on frames that still have one star in them.
     if instrument.top_row_start is None or instrument.beam_x_offset is None:
         instrument.top_row_start, instrument.beam_x_offset = fit_beam_geometry(
             instrument, reduced_frames)
     log.info("beam geometry: top row %d, x offset %d",
              instrument.top_row_start, instrument.beam_x_offset)
 
+    # --- 6. dither subtraction -----------------------------------------------
+    # At frame level, before the Wollaston beams are cut out, and pair-matched
+    # within one HWP angle so it differences two skies rather than two
+    # polarization states.
+    if cfg.background_method == "dither":
+        reduced_frames = subtract_dither_background(
+            reduced_frames, instrument,
+            tolerance_arcsec=cfg.dither_tolerance)
+
+    # Saved after the dither, not before: these files are meant to be what
+    # the Stokes cubes were built from, and DITHSUB records which frame was
+    # subtracted from each.
+    if cfg.save_preproc:
+        for reduced in reduced_frames:
+            reduced.save(os.path.join(paths.reduced_folder,
+                                      reduced["RED-FN"]))
+
+    # --- 7. HWP cycle matching -----------------------------------------------
     cycles = instrument.match_modulator_cycles(reduced_frames)
 
-    # --- 6. fast axis offset and instrumental polarization -------------------
+    # --- 8. fast axis offset and instrumental polarization -------------------
     # Both are chosen by naming a method. ReductionConfig has already checked
     # that the pair is coherent -- the Mueller model settles the two together,
     # so it is all or neither -- and that a fixed offset actually has a value.
@@ -302,7 +329,7 @@ def run(cfg, config_path=None):
 
     instrument.fast_axis_offset = theta_off
 
-    # --- 7. Stokes cubes -----------------------------------------------------
+    # --- 9. Stokes cubes -----------------------------------------------------
     # The leakage is removed in the instrument frame, before Q/U are rotated to
     # sky, so it is an argument here rather than subtracted from a finished
     # cube.
@@ -312,7 +339,7 @@ def run(cfg, config_path=None):
                                       **dd_kwargs)
     median_cube = median_stokes_cube(stokes_cubes)
 
-    # --- 8. products ---------------------------------------------------------
+    # --- 10. products ---------------------------------------------------------
     # THETAOFF is already on this header: build_stokes_cubes wrote it when
     # it resolved the offset it actually used.
     header = cycles[0][0].header.copy()
@@ -333,7 +360,8 @@ def run(cfg, config_path=None):
     writer.save_median_stokes(median_cube, header=header)
     writer.save_derived_products(median_cube, header=header,
                                  derived=cfg.save_derived_quantities,
-                                 radial=cfg.save_radial_stokes)
+                                 radial=cfg.save_radial_stokes,
+                                 dolp_min_intensity=cfg.dolp_min_intensity)
 
     run_log.finish()
 
