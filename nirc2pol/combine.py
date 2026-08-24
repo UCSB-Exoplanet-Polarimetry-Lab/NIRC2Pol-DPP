@@ -68,6 +68,10 @@ class CombineConfig(TomlConfig):
         "each input. Must match the target the reductions used.",
         "paths")
 
+    def default_config_path(self):
+        """``combine.toml`` inside ``output_root``, beside its log."""
+        return os.path.join(self.output_root, "combine.toml")
+
     def __post_init__(self):
         """Accept a single folder as well as a list."""
         if isinstance(self.reductions, str):
@@ -169,9 +173,11 @@ def run(cfg, config_path=None):
     # what someone reads this log for later.
     out = os.path.abspath(os.path.expanduser(cfg.output_root))
     os.makedirs(out, exist_ok=True)
+    saved_config = cfg.to_toml()
     run_log = start_reduction_log(os.path.join(out, "combine.log"))
-    run_log.settings(config=config_path, ninputs=len(sources),
-                     ncycles=len(frames), **cfg.describe())
+    run_log.settings(config=saved_config, config_source=config_path,
+                     ninputs=len(sources), ncycles=len(frames),
+                     **cfg.describe())
 
     bands = {s["band"] for s in sources}
     if len(bands) > 1:

@@ -12,6 +12,7 @@ into it when it can::
         reduced/      dark-subtracted, flat-divided frames
         sequences/    centered / derotated / combined products
         plots/
+        reduction_<date>.toml   the config this run used
         master_darks_<date>.fits
         master_flats_<date>.fits
         master_skies_<date>.fits
@@ -73,6 +74,8 @@ class ObslogPaths:
         :func:`nirc2pol.utils.frame.save_frames`.
     rejects_file : str
         TOML list of frames to exclude; see :func:`load_rejects`.
+    config_file : str
+        Where the config a run used is copied, beside the log.
     """
 
     reductions_root: str
@@ -85,6 +88,7 @@ class ObslogPaths:
 
     rejects_file: str = field(init=False)
     table_file: str = field(init=False)
+    config_file: str = field(init=False)
 
     darks_file: str = field(init=False)
     flats_file: str = field(init=False)
@@ -101,6 +105,14 @@ class ObslogPaths:
         # everything the reduction logged, in one file beside the products
         self.log_file = os.path.join(
             self.reductions_root, f"reduction_{self.date}.log")
+
+        # ...and the config it ran with, beside the log. A run records the
+        # config's *values* in the log either way; this is the file, so the
+        # reduction can be repeated from its own folder without hunting for
+        # whichever copy was passed on the command line and hoping it has
+        # not been edited since.
+        self.config_file = os.path.join(
+            self.reductions_root, f"reduction_{self.date}.toml")
 
         self.rejects_file = os.path.join(
             self.reductions_root, f"{self.date}_rejects.toml")

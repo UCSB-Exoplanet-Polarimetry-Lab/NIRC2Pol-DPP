@@ -19,6 +19,7 @@ make.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field, fields
 
 log = logging.getLogger(__name__)
@@ -126,8 +127,22 @@ class TomlConfig:
         """Every option and its value, for the run log."""
         return {f.name: getattr(self, f.name) for f in fields(self)}
 
-    def to_toml(self, path):
+    def default_config_path(self):
+        """Where this config belongs when no path is given.
+
+        Overridden by each config to name a file inside the folder it
+        writes to, so ``to_toml()`` with no argument puts the config with
+        the products it describes.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no default location for its config, "
+            f"so to_toml needs a path.")
+
+    def to_toml(self, path=None):
         """Write this config to ``path`` as TOML, and return the path.
+
+        With no path it goes to :meth:`default_config_path` -- inside the
+        folder this config writes to, beside the products it describes.
 
         The counterpart to :meth:`from_toml`, and it round-trips: reading back
         what this writes gives an equal config.
@@ -139,6 +154,8 @@ class TomlConfig:
         name, which is what ``run_log.settings(config=...)`` records.
         """
         name = type(self).__name__
+        path = self.default_config_path() if path is None else path
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
         text = self._render({f.name: getattr(self, f.name)
                              for f in fields(self)},
                             header=(f"# Written by {name}.to_toml.\n#\n"
@@ -176,14 +193,20 @@ class TomlConfig:
                 doc = f.metadata["doc"]
                 if f.metadata.get("unit"):
                     doc += f" [{f.metadata['unit']}]"
-                out += ["# " + line
-                        for line in textwrap.wrap(doc, 72)]
+                out += [("# " + line).rstrip() for line in _wrap(doc)]
                 if f.metadata.get("choices"):
-                    choices = ", ".join(
-                        "none" if c is None else repr(c)
-                        for c in f.metadata["choices"])
-                    out += ["# " + line for line in
-                            textwrap.wrap("choices: " + choices, 72)]
+                    # Only worth listing when the prose above did not already
+                    # walk through them one by one; otherwise it is a second
+                    # copy of the same list.
+                    named = sum(
+                        1 for c in f.metadata["choices"]
+                        if c is not None and f"  {c} " in doc)
+                    if named < len(f.metadata["choices"]) - 1:
+                        choices = ", ".join(
+                            "none" if c is None else repr(c)
+                            for c in f.metadata["choices"])
+                        out += [("# " + line).rstrip()
+                                for line in _wrap("choices: " + choices)]
                 out.append(f"{f.name} = {_toml_value(values[f.name])}")
                 out.append("")
         return "\n".join(out)
@@ -262,10 +285,22 @@ class ReductionConfig(TomlConfig):
     background_method: str = config_field(
         None,
         "How the sky/thermal background is removed, per Wollaston beam, "
-        "inside the Stokes builder. L'/M want dither or mean_box; JHK want "
-        "annulus or mean_box. Defaults to none because the right answer "
-        "depends on the band and the data, and the region a mean_box or "
-        "annulus uses cannot be guessed -- so this is a choice to make, not "
+        "inside the Stokes builder.\n"
+        "\n"
+        "  mean_box   the mean of a fixed box, set in background_box. Wants "
+        "a corner with no source in it.\n"
+        "  annulus    the median of an annulus around the star, set in "
+        "background_annulus. Follows a background that varies across the "
+        "frame better than a box in one corner.\n"
+        "  dither     subtract the matching dithered exposure, so the sky is "
+        "measured at the same time as the source. Needs a dither pattern in "
+        "the data.\n"
+        "  none       leave it in.\n"
+        "\n"
+        "L'/M want dither or mean_box, where the thermal background "
+        "dominates; JHK want annulus or mean_box. Defaults to none because "
+        "the right answer depends on the band and the data, and the region "
+        "a box or annulus uses cannot be guessed -- a choice to make, not "
         "one to inherit. On-sky data almost always needs one.",
         "background", choices=BACKGROUND_METHODS)
     background_box: list = config_field(
@@ -287,11 +322,41 @@ class ReductionConfig(TomlConfig):
         "data, which is the intended path -- the separation moves between "
         "epochs and a stale value fails silently.",
         "geometry", unit="px")
-    beam_x_offset: int = config_field(None, "See beam_top_row.", "geometry", unit="px")
+    beam_x_offset: int = config_field(None, "See beam_top_row.", "geometry",
+                                      unit="px")
     register_method: str = config_field(
         "smooth_peak",
-        "Star-centering algorithm. Use min for a saturated core: the default "
-        "smooth_peak hops between rim maxima of the donut and doubles the PSF.",
+        "How the star is located, so both Wollaston beams can be shifted "
+        "onto the image centre together. The right one depends on what the "
+        "source looks like, and the wrong one fails quietly -- a centre off "
+        "by a pixel leaks disk signal straight into U_phi.\n"
+        "\n"
+        "  smooth_peak    a point source. Peak of the Gaussian-smoothed "
+        "image, refined by a Gaussian fit. No guess or tuning needed.\n"
+        "  min            a SATURATED core. The centre reads dark, so "
+        "smooth_peak hops between rim maxima of the donut and doubles the "
+        "PSF; this takes the darkest pixel near the core instead.\n"
+        "  wings          behind a CORONAGRAPH. Masks the core, which "
+        "carries no position information, and aligns on the wings.\n"
+        "  symmetry       a round RESOLVED body (planet, moon). "
+        "Cross-correlates the image with its own 180-degree rotation; needs "
+        "no template, threshold or guess.\n"
+        "  silhouette     a resolved body with hotspots or albedo features. "
+        "Geometric centre of the thresholded region, ignoring how bright "
+        "each part of it is.\n"
+        "  centroid       an extended source. Flux-weighted centroid above a "
+        "threshold; still pulled about by bright surface features.\n"
+        "  crosscorr      aligning a sequence to one reference. Needs a "
+        "template= image, so it is not usable from this file alone.\n"
+        "  gaussian       a 2D Gaussian fit, seeded from quantile_peak.\n"
+        "  quantile_peak  the brightest pixel, ignoring outliers -- robust "
+        "to isolated hot pixels where max is not.\n"
+        "  max            the brightest pixel, full stop.\n"
+        "  none           do not register at all. For a source too faint to "
+        "find in a single frame.\n"
+        "\n"
+        "nirc2pol.reduction.registration documents the algorithms "
+        "themselves, and takes any callable f(data) -> (cy, cx) too.",
         "geometry", choices=REGISTER_METHODS)
 
     # ---- fast axis -----------------------------------------------------
@@ -382,6 +447,16 @@ class ReductionConfig(TomlConfig):
                 "[r_inner, r_outer].")
 
     # ------------------------------------------------------------------
+    def default_config_path(self):
+        """``reduction_<date>.toml`` inside ``reductions_root``.
+
+        The same name :class:`nirc2pol.utils.ObslogPaths` derives, so a
+        config written from a notebook lands exactly where a config written
+        by a run does.
+        """
+        return os.path.join(self.reductions_root,
+                            f"reduction_{self.date}.toml")
+
     def configure(self, instrument):
         """Apply the per-dataset settings to an instrument, and return it.
 
@@ -408,6 +483,31 @@ class ReductionConfig(TomlConfig):
         instrument.top_row_start = self.beam_top_row
         instrument.beam_x_offset = self.beam_x_offset
         return instrument
+
+
+def _wrap(doc, width=72):
+    """Wrap a field's doc for a comment block, keeping its own line breaks.
+
+    A doc written as one paragraph wraps as one paragraph. A doc written
+    with line breaks and indentation -- a list of what each choice means,
+    say -- keeps them, with continuation lines indented to match, so a
+    generated config can hold a small table and still read as one.
+    """
+    import textwrap
+
+    lines = []
+    for line in doc.splitlines():
+        if not line.strip():
+            lines.append("")
+            continue
+        indent = " " * (len(line) - len(line.lstrip()))
+        # A list item hangs its continuations under the text; a plain
+        # paragraph does not hang at all.
+        hang = indent + "    " if indent else ""
+        lines += textwrap.wrap(line.strip(), width,
+                               initial_indent=indent,
+                               subsequent_indent=hang)
+    return lines
 
 
 def _toml_value(value):

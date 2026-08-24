@@ -65,10 +65,10 @@ def run(cfg, config_path=None):
         Every choice the reduction makes. Already validated by its own
         ``__post_init__``, so this function does not re-check the options.
     config_path : str, optional
-        Path of the file ``cfg`` was read from, recorded in the reduction log
-        beside the values so a run can be repeated from the log alone. None
-        when the config was built in memory and never written out --
-        ``ReductionConfig.to_toml`` gives it somewhere to point.
+        Where ``cfg`` was read from, recorded in the log as ``config_source``.
+        The config itself is copied into the reduction folder as
+        ``reduction_<date>.toml`` regardless, so the run can be repeated from
+        its own folder; this only records where it originally came from.
 
     Returns
     -------
@@ -107,10 +107,16 @@ def run(cfg, config_path=None):
     # band requirement was enforced, the beam geometry it measured, any
     # centering fallback -- lands in one file beside the products. The console
     # still shows it too; this is the copy that survives the terminal.
+    # Copy the config in beside the log. The log records the values, but a
+    # file can be re-run, and the one that was passed on the command line
+    # may be edited or gone by the time anybody comes back to this.
+    saved_config = cfg.to_toml(paths.config_file)
+
     run_log = start_reduction_log(paths.log_file)
     run_log.settings(instrument=type(instrument).__name__,
                      background=instrument.describe_background(),
-                     config=config_path, **cfg.describe())
+                     config=saved_config, config_source=config_path,
+                     **cfg.describe())
     log.info("background: %s", instrument.describe_background())
     if instrument.top_row_start is not None:
         log.info("beam geometry overridden: top row %s, x offset %s",

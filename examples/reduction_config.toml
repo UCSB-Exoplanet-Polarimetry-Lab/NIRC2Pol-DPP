@@ -52,12 +52,23 @@ select_frame_range = "none"
 
 [background]
 # How the sky/thermal background is removed, per Wollaston beam, inside
-# the Stokes builder. L'/M want dither or mean_box; JHK want annulus or
-# mean_box. Defaults to none because the right answer depends on the band
-# and the data, and the region a mean_box or annulus uses cannot be
-# guessed -- so this is a choice to make, not one to inherit. On-sky data
+# the Stokes builder.
+#
+#   mean_box   the mean of a fixed box, set in background_box. Wants a
+#       corner with no source in it.
+#   annulus    the median of an annulus around the star, set in
+#       background_annulus. Follows a background that varies across the
+#       frame better than a box in one corner.
+#   dither     subtract the matching dithered exposure, so the sky is
+#       measured at the same time as the source. Needs a dither pattern in
+#       the data.
+#   none       leave it in.
+#
+# L'/M want dither or mean_box, where the thermal background dominates;
+# JHK want annulus or mean_box. Defaults to none because the right answer
+# depends on the band and the data, and the region a box or annulus uses
+# cannot be guessed -- a choice to make, not one to inherit. On-sky data
 # almost always needs one.
-# choices: 'mean_box', 'annulus', 'dither', none
 background_method = "none"
 
 # [ylow, yhigh, xlow, xhigh] for mean_box, in a source-free corner. [px]
@@ -79,10 +90,37 @@ beam_top_row = "none"
 # See beam_top_row. [px]
 beam_x_offset = "none"
 
-# Star-centering algorithm. Use min for a saturated core: the default
-# smooth_peak hops between rim maxima of the donut and doubles the PSF.
-# choices: 'smooth_peak', 'quantile_peak', 'max', 'min', 'gaussian',
-# 'centroid', 'silhouette', 'symmetry', 'wings', 'crosscorr'
+# How the star is located, so both Wollaston beams can be shifted onto the
+# image centre together. The right one depends on what the source looks
+# like, and the wrong one fails quietly -- a centre off by a pixel leaks
+# disk signal straight into U_phi.
+#
+#   smooth_peak    a point source. Peak of the Gaussian-smoothed image,
+#       refined by a Gaussian fit. No guess or tuning needed.
+#   min            a SATURATED core. The centre reads dark, so smooth_peak
+#       hops between rim maxima of the donut and doubles the PSF; this
+#       takes the darkest pixel near the core instead.
+#   wings          behind a CORONAGRAPH. Masks the core, which carries no
+#       position information, and aligns on the wings.
+#   symmetry       a round RESOLVED body (planet, moon). Cross-correlates
+#       the image with its own 180-degree rotation; needs no template,
+#       threshold or guess.
+#   silhouette     a resolved body with hotspots or albedo features.
+#       Geometric centre of the thresholded region, ignoring how bright
+#       each part of it is.
+#   centroid       an extended source. Flux-weighted centroid above a
+#       threshold; still pulled about by bright surface features.
+#   crosscorr      aligning a sequence to one reference. Needs a template=
+#       image, so it is not usable from this file alone.
+#   gaussian       a 2D Gaussian fit, seeded from quantile_peak.
+#   quantile_peak  the brightest pixel, ignoring outliers -- robust to
+#       isolated hot pixels where max is not.
+#   max            the brightest pixel, full stop.
+#   none           do not register at all. For a source too faint to find
+#       in a single frame.
+#
+# nirc2pol.reduction.registration documents the algorithms themselves, and
+# takes any callable f(data) -> (cy, cx) too.
 register_method = "smooth_peak"
 
 [fast_axis]
