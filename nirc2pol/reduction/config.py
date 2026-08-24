@@ -324,13 +324,20 @@ class ReductionConfig(TomlConfig):
         "as sky flats being the only usable ones you took in JHK.",
         "calibration", choices=FLAT_TYPES)
     allow_flat_without_dark: bool = config_field(
-        False,
-        "Build a master flat even when no dark matches its exposure, "
-        "tagging it +NODARK. Off by default: a flat still holding its dark "
-        "current is not a flat field -- the pedestal survives normalization "
-        "and divides into every science frame. Turn it on only when the "
-        "matching darks genuinely do not exist and you would rather have "
-        "the flat than nothing.",
+        True,
+        "Build a master flat even when no dark matches its exposure, tagging "
+        "it +NODARK. On by default, because darks are routinely not taken "
+        "for every flat and refusing meant a reduction stopped over a flat "
+        "in a band it was never going to use.\n"
+        "\n"
+        "What keeps this safe is the ranking, not the flag: within a filter "
+        "a +NODARK flat loses to EVERY dark-subtracted flat of the required "
+        "type, even a non-polarimetric one built from far fewer frames. It "
+        "is used only when nothing better exists in that filter -- and then "
+        "it is the only alternative to no flat at all. It still warns when "
+        "built, and the frame it calibrates records FLATTYPE ending +NODARK, "
+        "because the dark current it carries survives normalization and "
+        "divides into everything.",
         "calibration")
     allow_flat_type_mismatch: bool = config_field(
         False,

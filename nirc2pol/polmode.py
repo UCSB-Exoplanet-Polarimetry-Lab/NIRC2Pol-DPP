@@ -5,15 +5,16 @@ workflow in order:
 
     1. sort raw frames by type (headers)
     2. build master darks / flats / skies
-    3. pre-process science frames (dark, flat, bad pixels)
-    4. measure the beam geometry, then HWP cycle matching
-    5. fast axis offset (cfg.fast_axis_method) and instrumental polarization
+    3. choose the science frames this reduction covers
+    4. pre-process them (dark, flat, bad pixels)
+    5. measure the beam geometry, then HWP cycle matching
+    6. fast axis offset (cfg.fast_axis_method) and instrumental polarization
        (cfg.ip_method), chosen independently -- the butterfly fit settles the
        offset only
-    6. Stokes cubes per cycle -- beam splitting, background subtraction,
+    7. Stokes cubes per cycle -- beam splitting, background subtraction,
        registration (cfg.register_method) and double differencing all happen
        inside the builder
-    7. median Stokes cube, PI / AoLP / DoLP and radial Stokes, written with
+    8. median Stokes cube, PI / AoLP / DoLP and radial Stokes, written with
        full provenance by ``ProductWriter``
 
 ``nirc2pol-reduce night.toml`` is this function with a command line around
@@ -179,15 +180,28 @@ def run(cfg, config_path=None):
 
     master_masks = make_master_masks(dark_masks, flat_masks)
 
-    # --- 3. pre-process science frames ---------------------------------------
-    # read once, not once per frame: this loads a FITS file
-    bad_pixel_mask = instrument.bad_pixel_mask()
-
+    # --- 3. choose the frames this reduction covers --------------------------
+    # Before reducing, not after. sort_frames classifies by elimination --
+    # anything that is not a dark or a flat is science -- so the science
+    # bucket also holds acquisition and engineering frames, in whatever band
+    # they were taken. Reducing the whole bucket first means spending the
+    # time on frames that are about to be discarded, and failing outright on
+    # one in a band this night has no flat for.
+    #
+    # The frame table is written for the WHOLE night, since it is the thing
+    # you read while deciding what to select.
     sci_frames = load_frames(sorted_files["sci"], rejects=rejects)
     # cfg.date above must be the UTC date the frames carry, since the masters
     # and every product inherit it from the folder name
     paths.check_frame_dates(sci_frames)
     nirc2.make_frametable(sci_frames, paths.table_file)
+
+    sci_frames = select_frames(sci_frames, target=cfg.select_target,
+                               frame_range=cfg.select_frame_range)
+
+    # --- 4. pre-process the frames selected ----------------------------------
+    # read once, not once per frame: this loads a FITS file
+    bad_pixel_mask = instrument.bad_pixel_mask()
 
     reduced_frames = []
     for frame in sci_frames:
@@ -213,15 +227,7 @@ def run(cfg, config_path=None):
             reduced.save(os.path.join(paths.reduced_folder, reduced["RED-FN"]))
         reduced_frames.append(reduced)
 
-    # --- 3b. choose the frames this reduction covers -------------------------
-    # Everything above ran on the whole night. From here on it is just the
-    # frames selected, so the Stokes products are built from those alone. The
-    # choice is logged, so the reduction log records which frames the products
-    # came from.
-    reduced_frames = select_frames(reduced_frames, target=cfg.select_target,
-                                   frame_range=cfg.select_frame_range)
-
-    # --- 4. HWP cycle matching -----------------------------------------------
+    # --- 5. HWP cycle matching ----------------------------------------------
     # Measure where the two beams sit, from these frames. The separation moves
     # between epochs, so it is measured every time rather than looked up: a
     # value written down once goes stale without saying so. Nothing downstream
@@ -235,7 +241,7 @@ def run(cfg, config_path=None):
 
     cycles = instrument.match_modulator_cycles(reduced_frames)
 
-    # --- 5. fast axis offset and instrumental polarization -------------------
+    # --- 6. fast axis offset and instrumental polarization -------------------
     # Both are chosen by naming a method. ReductionConfig has already checked
     # that the pair is coherent -- the Mueller model settles the two together,
     # so it is all or neither -- and that a fixed offset actually has a value.
@@ -296,7 +302,7 @@ def run(cfg, config_path=None):
 
     instrument.fast_axis_offset = theta_off
 
-    # --- 6. Stokes cubes -----------------------------------------------------
+    # --- 7. Stokes cubes -----------------------------------------------------
     # The leakage is removed in the instrument frame, before Q/U are rotated to
     # sky, so it is an argument here rather than subtracted from a finished
     # cube.
@@ -306,7 +312,7 @@ def run(cfg, config_path=None):
                                       **dd_kwargs)
     median_cube = median_stokes_cube(stokes_cubes)
 
-    # --- 7. products ---------------------------------------------------------
+    # --- 8. products ---------------------------------------------------------
     header = cycles[0][0].header.copy()
     header["THETAOFF"] = (theta_off, "fast axis offset [deg]")
 
