@@ -69,9 +69,10 @@ def main(argv=None):
     Returns
     -------
     int
-        Process exit status: 0 on success, 2 when the config is missing or
-        will not validate. Anything the reduction itself raises is left to
-        propagate -- a traceback says more than a summary would.
+        Process exit status: 0 on success, 2 when the config is missing,
+        will not validate, or points at data that is not there. Anything
+        else the reduction raises is left to propagate -- a traceback says
+        more than a summary would.
     """
     args = build_parser().parse_args(argv)
 
@@ -108,7 +109,14 @@ def main(argv=None):
         print(f"{args.config}: {exc}", file=sys.stderr)
         return 2
 
-    products = run(cfg, config_path=args.config)
+    try:
+        products = run(cfg, config_path=args.config)
+    except FileNotFoundError as exc:
+        # Data that is not where the config says it is: the user's to fix,
+        # and the message already explains it. Anything else propagates --
+        # a traceback says more about a bug than a summary would.
+        print(exc, file=sys.stderr)
+        return 2
 
     writer = products["writer"]
     run_log = products["run_log"]

@@ -39,7 +39,6 @@ background from whole frames beforehand would measure it across both beams at
 once, and would leave the instrument's own setting unused.
 """
 
-import glob
 import logging
 import os
 
@@ -51,9 +50,8 @@ from nirc2pol.polarimetry import (ProductWriter, apply_mueller_model,
 from nirc2pol.reduction import (fit_beam_geometry, make_master_darks,
                                 make_master_flats, make_master_masks,
                                 make_master_skies, reduce_frame)
-from nirc2pol.utils import (ObslogPaths, in_frame_range, load_frames,
-                            load_rejects, save_frames, select_frames,
-                            start_reduction_log)
+from nirc2pol.utils import (ObslogPaths, load_frames, load_rejects,
+                            save_frames, select_frames, start_reduction_log)
 
 log = logging.getLogger(__name__)
 
@@ -111,15 +109,14 @@ def run(cfg, config_path=None):
                  instrument.top_row_start, instrument.beam_x_offset)
 
     # --- 1. sort raw frames by type ------------------------------------------
-    # *.fits* rather than *.fits so gzipped archive frames are picked up too
-    raw_files = sorted(glob.glob(os.path.join(paths.raw_folder, "*.fits*")))
-    if cfg.raw_range is not None:
-        # Narrow what is read off disk at all. Distinct from
-        # select_frame_range, which picks the science frames: this has to stay
-        # wide enough to include the darks and flats, or the masters cannot be
-        # built.
-        raw_files = [f for f in raw_files if in_frame_range(f, cfg.raw_range)]
-        log.info("raw_range keeps %d raw files", len(raw_files))
+    # cfg.raw_range narrows what is read off disk at all. Distinct from
+    # select_frame_range, which picks the science frames: this has to stay
+    # wide enough to include the darks and flats, or the masters cannot be
+    # built. raw_files raises on an empty night, or on a range that excluded
+    # everything, rather than letting a reduction with no frames in it carry
+    # on and fail somewhere that cannot say what was wrong.
+    raw_files = paths.raw_files(frame_range=cfg.raw_range)
+    log.info("%d raw file(s) in %s", len(raw_files), paths.raw_folder)
     sorted_files = instrument.sort_frames(raw_files)
 
     # --- 2. master darks / flats / skies -------------------------------------

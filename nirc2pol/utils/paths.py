@@ -16,11 +16,12 @@ Mirrors AIR.jl's ObslogPaths::
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 from dataclasses import dataclass, field
 
-from nirc2pol.utils.frame import parse_date_obs
+from nirc2pol.utils.frame import in_frame_range, parse_date_obs
 
 
 log = logging.getLogger(__name__)
@@ -110,6 +111,74 @@ class ObslogPaths:
             self.data_folder, f"master_skies_{self.date}.fits")
         self.masks_file = os.path.join(
             self.data_folder, f"master_mask_{self.date}.fits")
+
+    def raw_files(self, frame_range=None, pattern="*.fits*"):
+        """The night's raw frames, in name order.
+
+        Parameters
+        ----------
+        frame_range : tuple or list of tuple, optional
+            Keep only frames whose observation number falls inside one of
+            these inclusive ranges; see
+            :func:`nirc2pol.utils.frame.in_frame_range`. This is read from
+            the filename, so nothing is opened to apply it.
+        pattern : str, optional
+            Glob for the raw files. The default ends in ``*`` so gzipped
+            archive frames (``n0902.fits.gz``) are picked up too.
+
+        Returns
+        -------
+        list of str
+            Absolute paths, sorted.
+
+        Raises
+        ------
+        FileNotFoundError
+            When the night has no frames to reduce, either way of getting
+            there: nothing matching in ``raw_folder``, or files there but
+            ``frame_range`` excluding every one. The message says which, and
+            says so explicitly when the frames turn out to be sitting in
+            ``observations_folder`` instead -- the layout mistake this
+            exists to catch. One exception type because from the caller's
+            side the two are the same condition, and the command line can
+            then report both as the user errors they are rather than as
+            tracebacks.
+
+        Notes
+        -----
+        Raising here is the point. Without it an empty night reads as zero
+        darks, zero flats and zero science frames, each merely logged, and
+        the reduction runs on for several steps before failing somewhere
+        that cannot say what was actually wrong.
+        """
+        found = sorted(glob.glob(os.path.join(self.raw_folder, pattern)))
+
+        if not found:
+            # The usual cause: an archive folder holding the frames directly,
+            # with no <date>/raw/ beneath it. Say so rather than making the
+            # user work it out from an empty result.
+            loose = sorted(glob.glob(os.path.join(self.observations_folder,
+                                                  pattern)))
+            hint = ""
+            if loose:
+                hint = (f" {len(loose)} frame(s) do sit directly in "
+                        f"{self.observations_folder}; this layout is two "
+                        f"levels deep, so they belong in {self.raw_folder} "
+                        f"(a symlink is enough).")
+            raise FileNotFoundError(
+                f"No raw frames matching {pattern!r} in {self.raw_folder}."
+                + hint)
+
+        if frame_range is None:
+            return found
+
+        kept = [f for f in found if in_frame_range(f, frame_range)]
+        if not kept:
+            raise FileNotFoundError(
+                f"raw_range {frame_range} excluded all {len(found)} frame(s) "
+                f"in {self.raw_folder}. It is read from the filename, so "
+                f"check the numbers against what is there.")
+        return kept
 
     def check_frame_dates(self, frames, keyword="DATE-OBS"):
         """Warn when the dataset folder's date disagrees with its frames.
