@@ -4,6 +4,7 @@ radial Stokes, and the Mueller matrix model interface."""
 from .stokes import (
     CRITICAL_ANGLES,
     azimuthal_angle,
+    aperture_polarization,
     build_stokes_cube,
     build_stokes_cubes,
     double_difference,
@@ -49,6 +50,7 @@ __all__ = [
     "PreparedCycle",
     "ProductWriter",
     "azimuthal_angle",
+    "aperture_polarization",
     "apply_mueller_model",
     "build_corrected_stokes_cube",
     "build_stokes_cube",

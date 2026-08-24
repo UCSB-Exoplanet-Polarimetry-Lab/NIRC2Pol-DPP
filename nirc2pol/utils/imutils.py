@@ -219,6 +219,92 @@ def make_annulus_mask(shape, inner_radius, outer_radius, center=None):
     return (r2 >= inner_radius**2) & (r2 <= outer_radius**2)
 
 
+def curve_of_growth(image, center=None, radii=None, mask=None):
+    """Enclosed flux against aperture radius.
+
+    Parameters
+    ----------
+    image : array_like
+        2D image. NaNs are ignored.
+    center : tuple of float, optional
+        ``(cy, cx)`` to grow about. Defaults to the flux-weighted centroid in
+        a 31 px box about the brightest pixel, which is what you want on a
+        star and not what you want on anything else -- pass it explicitly for
+        an extended or off-centre source.
+    radii : array_like, optional
+        Radii to evaluate, in pixels. Defaults to 1..100 in unit steps.
+    mask : ndarray of bool, optional
+        True where a pixel may be used. Use it to exclude a companion, a
+        detector edge, or the zero-filled wedge registration leaves behind.
+
+    Returns
+    -------
+    radii : ndarray
+        The radii evaluated.
+    enclosed : ndarray
+        Summed flux inside each radius.
+
+    Notes
+    -----
+    Apertures are whole pixels inside ``r``, not area-weighted, so the curve
+    is a step function at small radii -- fine for choosing an aperture,
+    not for absolute photometry below a few pixels.
+
+    Read the shape, not just the endpoint. A curve that turns over has run
+    into something that is not the star: a negative dither ghost, a
+    neighbour, or an over-subtracted background. A curve that never flattens
+    means the background is not actually zero.
+    """
+    image = np.asarray(image, dtype=float)
+    ny, nx = image.shape
+    if center is None:
+        finite = np.where(np.isfinite(image), image, 0.0)
+        py, px = np.unravel_index(np.argmax(finite), finite.shape)
+        yy, xx = np.mgrid[:ny, :nx]
+        box = (np.abs(yy - py) <= 15) & (np.abs(xx - px) <= 15)
+        w = np.clip(finite, 0, None) * box
+        center = ((yy * w).sum() / w.sum(), (xx * w).sum() / w.sum())
+    if radii is None:
+        radii = np.arange(1.0, 101.0)
+    radii = np.asarray(radii, dtype=float)
+
+    yy, xx = np.mgrid[:ny, :nx]
+    r = np.hypot(yy - center[0], xx - center[1])
+    usable = np.isfinite(image) if mask is None else (np.isfinite(image) & mask)
+
+    enclosed = np.array([np.sum(image[(r <= rad) & usable]) for rad in radii])
+    return radii, enclosed
+
+
+def growth_radius(radii, enclosed, frac=0.9):
+    """Smallest radius enclosing ``frac`` of the total flux.
+
+    Parameters
+    ----------
+    radii, enclosed : array_like
+        As returned by :func:`curve_of_growth`.
+    frac : float, optional
+        Fraction of the maximum enclosed flux.
+
+    Returns
+    -------
+    float
+        The radius, or ``nan`` if the curve never reaches ``frac``.
+
+    Notes
+    -----
+    Normalised to the curve's maximum, not its last point, so a curve that
+    turns over still gives a sensible answer.
+    """
+    radii = np.asarray(radii, dtype=float)
+    enclosed = np.asarray(enclosed, dtype=float)
+    peak = np.nanmax(enclosed)
+    if not np.isfinite(peak) or peak <= 0:
+        return float("nan")
+    hit = np.flatnonzero(enclosed >= frac * peak)
+    return float(radii[hit[0]]) if hit.size else float("nan")
+
+
 def make_sigma_clip_mask(data, n_sigma=9.0):
     """Mask the bright tail of an image: hot pixels and cosmic rays.
 

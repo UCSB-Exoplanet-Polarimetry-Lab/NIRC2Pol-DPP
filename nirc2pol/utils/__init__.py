@@ -23,6 +23,8 @@ from .frame import (
 from .imutils import (
     argquantile,
     crop,
+    curve_of_growth,
+    growth_radius,
     image_is_larger,
     make_annulus_mask,
     make_circle_mask,
@@ -51,6 +53,8 @@ __all__ = [
     "angles_match",
     "argquantile",
     "crop",
+    "curve_of_growth",
+    "growth_radius",
     "describe",
     "drop_step",
     "frame_number",

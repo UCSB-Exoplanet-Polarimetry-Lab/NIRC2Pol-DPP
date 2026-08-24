@@ -466,6 +466,131 @@ def polarization_products(stokes_cube, min_intensity_frac=0.001):
     return pi, aolp, dolp
 
 
+def aperture_polarization(stokes_cube, center=None, radius=None,
+                          background=None, background_method="plane",
+                          mask=None):
+    """Integrated q, u, p and position angle in a circular aperture.
+
+    Parameters
+    ----------
+    stokes_cube : ndarray
+        ``(3, ny, nx)`` as ``[I, Q, U]``.
+    center : tuple of float, optional
+        ``(cy, cx)``. Defaults to the centroid found by
+        :func:`nirc2pol.utils.imutils.curve_of_growth`.
+    radius : float, optional
+        Aperture radius in pixels. Defaults to the radius enclosing 90% of
+        the flux, from the curve of growth.
+    background : tuple of float, optional
+        ``(r_inner, r_outer)`` annulus to measure the background in. None
+        skips the subtraction, which is almost never right -- see the notes.
+    background_method : {"plane", "median", None}, optional
+        How to model the background in that annulus. ``"plane"`` fits a
+        tilted plane, ``"median"`` a constant.
+    mask : ndarray of bool, optional
+        True where a pixel may be used, for excluding a companion or the
+        zero-filled wedge left by registration.
+
+    Returns
+    -------
+    dict
+        ``radius``, ``center``, ``I``, ``Q``, ``U`` (summed, background
+        removed), ``q``, ``u``, ``p`` and ``theta`` in degrees [0, 180), plus
+        ``background`` as the per-pixel ``(I, Q, U)`` removed at the centre.
+
+    Notes
+    -----
+    **The background has to come off Q and U, not only I.** They are
+    differences, so the sky is expected to cancel -- and it does not, quite:
+    at L-prime the thermal background moves between HWP positions and leaves
+    a residual. On the 2025-12-06 standard, U carried a detector-scale
+    gradient worth +22 ADU/px at the star. That is nothing next to a
+    1.2e5 ADU/px core, but an annulus at r=60-80 has ~9000 pixels and sums it
+    into more signal than the star has out there. Left in, p ran from 0.9% at
+    r=8 to 4.1% at r=100 and the angle swung 50 degrees; removed, p is flat
+    at 0.88-0.95% over that whole range.
+
+    A plane rather than a constant because that gradient was not centred on
+    the star, so its level under the aperture differs from its level in the
+    annulus.
+
+    **A drifting p is a diagnostic, not a fact about the source.** Aperture
+    losses cannot bias it: q, u and I are integrated over the same pixels, so
+    clipping the PSF divides out. If p changes with radius, something else is
+    -- background, a neighbour, or beam misalignment -- and the fix is to
+    find it rather than to pick an aperture.
+
+    This does not correct instrumental polarization. On NIRC2 the I -> Q/U
+    leakage is of order 1-2%, which is larger than a typical standard star's
+    signal, so a value from here is not comparable with a catalogue one
+    unless ``cfg.ip_method`` removed it first.
+    """
+    from nirc2pol.utils.imutils import curve_of_growth, growth_radius
+
+    cube = np.asarray(stokes_cube, dtype=float)
+    if cube.ndim != 3 or cube.shape[0] < 3:
+        raise ValueError("expected a (3, ny, nx) Stokes cube, got shape "
+                         f"{cube.shape}")
+    I, Q, U = cube[0], cube[1], cube[2]
+    ny, nx = I.shape
+
+    radii, enclosed = curve_of_growth(I, center=center, mask=mask)
+    if center is None:
+        finite = np.where(np.isfinite(I), I, 0.0)
+        py, px = np.unravel_index(np.argmax(finite), finite.shape)
+        yy, xx = np.mgrid[:ny, :nx]
+        box = (np.abs(yy - py) <= 15) & (np.abs(xx - px) <= 15)
+        w = np.clip(finite, 0, None) * box
+        center = ((yy * w).sum() / w.sum(), (xx * w).sum() / w.sum())
+    if radius is None:
+        radius = growth_radius(radii, enclosed, 0.9)
+
+    yy, xx = np.mgrid[:ny, :nx]
+    r = np.hypot(yy - center[0], xx - center[1])
+    usable = np.isfinite(I) & np.isfinite(Q) & np.isfinite(U)
+    if mask is not None:
+        usable &= mask
+
+    removed = {}
+    if background is not None and background_method:
+        ann = usable & (r >= background[0]) & (r < background[1])
+        if ann.sum() < 10:
+            raise ValueError(
+                f"background annulus {background} holds {int(ann.sum())} "
+                "usable pixels, too few to fit. Widen it, or check that the "
+                "mask is not excluding it.")
+        planes = {}
+        if background_method == "plane":
+            A = np.column_stack([xx[ann], yy[ann], np.ones(int(ann.sum()))])
+            for name, arr in (("I", I), ("Q", Q), ("U", U)):
+                coef, *_ = np.linalg.lstsq(A, arr[ann], rcond=None)
+                planes[name] = coef[0] * xx + coef[1] * yy + coef[2]
+        elif background_method == "median":
+            for name, arr in (("I", I), ("Q", Q), ("U", U)):
+                planes[name] = np.full_like(I, np.nanmedian(arr[ann]))
+        else:
+            raise ValueError(
+                f"unknown background_method {background_method!r}; "
+                "use 'plane', 'median' or None")
+        I, Q, U = I - planes["I"], Q - planes["Q"], U - planes["U"]
+        cy_i, cx_i = int(round(center[0])), int(round(center[1]))
+        removed = {name: float(pl[cy_i, cx_i]) for name, pl in planes.items()}
+
+    ap = usable & (r <= radius)
+    it, qt, ut = np.sum(I[ap]), np.sum(Q[ap]), np.sum(U[ap])
+    q, u = (qt / it, ut / it) if it else (np.nan, np.nan)
+    return {
+        "radius": float(radius),
+        "center": (float(center[0]), float(center[1])),
+        "npix": int(ap.sum()),
+        "I": float(it), "Q": float(qt), "U": float(ut),
+        "q": float(q), "u": float(u),
+        "p": float(np.hypot(q, u)),
+        "theta": float(np.degrees(0.5 * np.arctan2(u, q)) % 180.0),
+        "background": removed,
+    }
+
+
 def azimuthal_angle(shape, center=None):
     """Azimuthal angle phi [rad] around ``center = (cy, cx)`` for each
         pixel. Since only 2*phi enters the radial Stokes formulas, the choice of
