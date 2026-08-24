@@ -382,6 +382,27 @@ class ReductionConfig(TomlConfig):
         "background")
 
     # ---- beams and registration ---------------------------------------
+    sky_group_radius: float = config_field(
+        60.0,
+        "How far the telescope may move before its sky frames count as a "
+        "different set. Sky sets used to be merged whenever their exposure "
+        "settings matched, whatever the telescope was pointing at, so three "
+        "sets at three targets became one master and no later choice could "
+        "recover them.",
+        "skies", unit="arcsec")
+    sky_group_gap: float = config_field(
+        30.0,
+        "How long a pause may be before the sky frames after it count as a "
+        "different set. Position alone cannot separate two sets at the same "
+        "place hours apart, and on L' the thermal background has moved on by "
+        "then.",
+        "skies", unit="min")
+    sky_max_radius: float = config_field(
+        600.0,
+        "Warn when the nearest usable sky is further from the science frame "
+        "than this. A sky that far off measures a different piece of "
+        "atmosphere, and on L' the sky is most of what is being subtracted.",
+        "skies", unit="arcsec")
     beam_top_row: int = config_field(
         None,
         "Beam geometry, if you are overriding it. none measures it from the "

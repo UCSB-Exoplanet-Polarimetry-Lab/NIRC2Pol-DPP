@@ -171,7 +171,9 @@ def run(cfg, config_path=None):
         master_skies, _ = make_master_skies(
             load_frames(sorted_files["flats_sky"], rejects=rejects),
             master_darks, instrument=instrument,
-            min_frames=cfg.master_min_frames)
+            min_frames=cfg.master_min_frames,
+            group_radius_arcsec=cfg.sky_group_radius,
+            group_gap_minutes=cfg.sky_group_gap)
         if master_skies and cfg.save_preproc:
             save_frames(paths.skies_file, master_skies)
 
@@ -201,6 +203,8 @@ def run(cfg, config_path=None):
             allow_flat_type_mismatch=cfg.allow_flat_type_mismatch,
             allow_no_flat=cfg.allow_no_flat,
             skip_sky_sub=cfg.skip_sky_sub,
+            sky_group_radius_arcsec=cfg.sky_group_radius,
+            sky_max_radius_arcsec=cfg.sky_max_radius,
             replacement_method=cfg.replacement_method,
             gain=instrument.gain(frame),
             saturation_limit=instrument.saturation_limit(frame),

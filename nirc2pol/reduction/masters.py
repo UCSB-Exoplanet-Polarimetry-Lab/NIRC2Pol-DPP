@@ -25,7 +25,8 @@ import logging
 import numpy as np
 from scipy import ndimage
 
-from nirc2pol.utils.frame import Frame, framelist_to_cube, match_keys
+from nirc2pol.utils.frame import (Frame, framelist_to_cube,
+                                  group_by_pointing, match_keys)
 from nirc2pol.utils.imutils import crop
 from .calibrate import find_closest_dark
 from nirc2pol.utils.provenance import record_step
@@ -112,7 +113,16 @@ def make_masters(frames, keylist, bad_pixel_mask=None, n_sigma=6.0,
 
     for key in list(frame_dict):
         if len(frame_dict[key]) < min_frames:
-            log.warning("Not enough frames for key %s, skipping...", key)
+            # Say where and when, not only which key. Splitting skies by
+            # pointing makes small groups where a merged master used to hide
+            # them, and a dropped sky set has to be visible as a sky set.
+            dropped = frame_dict[key]
+            log.warning(
+                "Only %d frame(s) for key %s, fewer than min_frames=%d, so "
+                "no master is built from them: %s%s", len(dropped), key,
+                min_frames,
+                ", ".join(str(f.get("FILENAME")) for f in dropped[:4]),
+                _where_and_when(dropped[0]))
             del frame_dict[key]
         else:
             log.info("Making master for key -> %s, count -> %d", key,
@@ -478,10 +488,18 @@ def make_flats(flat_frames, master_darks, keylist=None, bad_pixel_mask=None,
 
 
 def make_master_skies(sky_frames, master_darks, keylist=None,
-                      bad_pixel_mask=None, min_frames=3, instrument=None,
-                      **kwargs):
+                      bad_pixel_mask=None, min_frames=3,
+                      group_radius_arcsec=60.0, group_gap_minutes=30.0,
+                      instrument=None, **kwargs):
     """Build master skies: like flats (dark-subtracted) but *not* normalized,
         since skies are subtracted rather than divided. Returns flat lists.
+
+        Sky frames are split into observing groups by pointing and time
+        first, and the group joins the keylist, so sets taken at different
+        places stay different masters. Without that, a night with three sky
+        sets at three targets median-combines them into one -- the exposure
+        settings are identical, which is all the keylist used to look at --
+        and no later choice can recover what was averaged away.
 
     Parameters
     ----------
@@ -494,7 +512,13 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
     bad_pixel_mask : ndarray of bool, optional
         Static detector mask. Defaults to ``instrument.bad_pixel_mask()``.
     min_frames : int, optional
-        Minimum frames per master.
+        Minimum frames per master. Note that splitting by group makes groups
+        smaller than the merged whole, so this can drop a set that used to
+        be absorbed into a larger master; it is warned about by pointing.
+    group_radius_arcsec : float, optional
+        How far the telescope may move within one sky set.
+    group_gap_minutes : float, optional
+        How long a pause may be within one sky set.
     instrument : PolarimetryData, optional
         Supplies ``bad_pixel_mask`` when it is not given explicitly.
     **kwargs
@@ -510,6 +534,15 @@ def make_master_skies(sky_frames, master_darks, keylist=None,
     keylist = keylist if keylist is not None else defaults.FLATS_KEYLIST
     bad_pixel_mask = _instrument_default(instrument, bad_pixel_mask,
                                          "bad_pixel_mask", call=True)
+
+    # Where and when, added to the grouping key. The masters keep OBSGRP
+    # afterwards because make_masters repopulates the grouping keywords, and
+    # each master inherits its group's first frame, so its RA/DEC/UTC are
+    # the group's -- which is what find_closest_sky matches on.
+    if sky_frames:
+        group_by_pointing(sky_frames, radius_arcsec=group_radius_arcsec,
+                          gap_minutes=group_gap_minutes, keyword="OBSGRP")
+        keylist = list(keylist) + ["OBSGRP"]
 
     # How to tell whether the modulator was in the beam. Bound method rather
     # than a value, so it is taken from the instrument directly.
@@ -573,6 +606,18 @@ def required_flat_type_for(band, override=None, flat_types=None,
     key = str(band or "").strip()
     wanted = (flat_types or {}).get(key, default)
     return str(wanted).upper() if wanted else None
+
+
+def _where_and_when(frame):
+    """`` (at RA/Dec ..., 09:03 UTC)`` for a log line, or "" if unknown."""
+    from nirc2pol.utils.frame import observed_at, pointing_of
+
+    point, when = pointing_of(frame), observed_at(frame)
+    if point is None and when is None:
+        return ""
+    where = f"RA/Dec {point[0]:.3f} {point[1]:+.3f}" if point else "unknown"
+    clock = f", {when:%H:%M} UTC" if when else ""
+    return f" (at {where}{clock})"
 
 
 def describe_flat(flat):

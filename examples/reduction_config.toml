@@ -136,6 +136,25 @@ master_min_frames = 3
 #       more robust where a whole region is bad.
 replacement_method = "interpolation"
 
+[skies]
+# How far the telescope may move before its sky frames count as a
+# different set. Sky sets used to be merged whenever their exposure
+# settings matched, whatever the telescope was pointing at, so three sets
+# at three targets became one master and no later choice could recover
+# them. [arcsec]
+sky_group_radius = 60.0
+
+# How long a pause may be before the sky frames after it count as a
+# different set. Position alone cannot separate two sets at the same place
+# hours apart, and on L' the thermal background has moved on by then.
+# [min]
+sky_group_gap = 30.0
+
+# Warn when the nearest usable sky is further from the science frame than
+# this. A sky that far off measures a different piece of atmosphere, and
+# on L' the sky is most of what is being subtracted. [arcsec]
+sky_max_radius = 600.0
+
 [geometry]
 # Beam geometry, if you are overriding it. none measures it from the data,
 # which is the intended path -- the separation moves between epochs and a

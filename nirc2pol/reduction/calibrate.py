@@ -371,7 +371,138 @@ def find_closest_dark(frame, master_darks, ranked_keylists=None):
     return None, None
 
 
-def find_closest_sky(frame, master_skies, ranked_keylists=None):
+def find_matching_masters(frame, masters, keylist):
+    """Every master matching ``frame`` on ``keylist``, as ``(index, master)``.
+
+    The plural of :func:`find_matching_master`. Taking the first match is
+    right when the keylist settles the question; when several masters match
+    equally -- several sky sets at the same exposure -- something else has to
+    choose between them, and it needs to see them all.
+
+    Parameters
+    ----------
+    frame : Frame
+        Science frame to match.
+    masters : list of Frame
+        Candidate calibration masters.
+    keylist : list of str
+        Header keywords that must all agree.
+
+    Returns
+    -------
+    list of tuple
+        ``(index, master)`` in list order; empty when nothing matched.
+    """
+    return [(i, m) for i, m in enumerate(masters)
+            if all_header_keywords_match(frame, m, keylist)]
+
+
+def _sky_separation(frame, sky):
+    """Arcsec between a frame's pointing and a sky's, or None."""
+    from nirc2pol.utils.angles import small_angle_distance
+    from nirc2pol.utils.frame import pointing_of
+
+    here, there = pointing_of(frame), pointing_of(sky)
+    if here is None or there is None:
+        return None
+    return small_angle_distance(here, there) * 3600.0
+
+
+def _sky_interval(frame, sky):
+    """Minutes between a frame and a sky, or None."""
+    from nirc2pol.utils.frame import observed_at
+
+    here, there = observed_at(frame), observed_at(sky)
+    if here is None or there is None:
+        return None
+    return abs((here - there).total_seconds()) / 60.0
+
+
+def _warn_if_far(frame, sky, max_radius_arcsec, separation=None):
+    """Warn when the sky about to be used was taken somewhere else."""
+    if separation is None:
+        separation = _sky_separation(frame, sky)
+    if separation is None or separation <= max_radius_arcsec:
+        return
+    log.warning(
+        "The sky being subtracted from %s was taken %.0f arcsec away "
+        "(group %s), further than %.0f. A sky that far off measures a "
+        "different piece of atmosphere, and on L' the sky is most of what "
+        "is being subtracted -- check that a nearer set exists and was not "
+        "dropped for having too few frames or for a different exposure.",
+        frame.get("FILENAME"), separation, sky.get("OBSGRP"),
+        max_radius_arcsec)
+
+
+def choose_nearest_sky(frame, candidates, max_radius_arcsec=600.0,
+                       same_pointing_arcsec=60.0):
+    """Pick the sky taken nearest this frame: position first, then time.
+
+    Parameters
+    ----------
+    frame : Frame
+        The science frame.
+    candidates : list of tuple
+        ``(index, master)`` skies already known to be compatible.
+    max_radius_arcsec : float, optional
+        Warn when even the nearest sky is further away than this.
+    same_pointing_arcsec : float, optional
+        Separations within this of each other count as the same place, and
+        the tie is broken by time.
+
+    Returns
+    -------
+    tuple
+        ``(index, master)``; the first candidate when nothing can be
+        measured.
+
+    Notes
+    -----
+    Position leads because a sky measures the background where it was
+    pointed, and on L' that background is most of the signal. Time breaks
+    the tie because the thermal background drifts through a night, so
+    between two sets at the same place the nearer in time is the better
+    measurement of it.
+
+    A frame or sky with no readable pointing falls back to the first
+    compatible candidate, with a warning: bookkeeping that cannot be read
+    should not stop a reduction, but it should not pass silently either.
+    """
+    if len(candidates) == 1:
+        # Still check how far it is. Being the only compatible sky is not a
+        # reason to be a good one, and this is exactly the case where the
+        # distance goes unnoticed: nothing was compared, so nothing looked
+        # wrong.
+        _warn_if_far(frame, candidates[0][1], max_radius_arcsec)
+        return candidates[0]
+
+    scored = []
+    for ind, sky in candidates:
+        separation = _sky_separation(frame, sky)
+        if separation is None:
+            log.warning(
+                "Cannot tell how far sky group %s is from %s -- one of them "
+                "has no readable RA/DEC -- so the skies cannot be ranked by "
+                "position and the first compatible one is used.",
+                sky.get("OBSGRP"), frame.get("FILENAME"))
+            return candidates[0]
+        scored.append((separation, _sky_interval(frame, sky) or 0.0, ind, sky))
+
+    nearest = min(s[0] for s in scored)
+    # Everything at effectively the same place, ranked by time among itself.
+    tied = [s for s in scored if s[0] - nearest <= same_pointing_arcsec]
+    separation, interval, ind, sky = min(tied, key=lambda s: (s[1], s[0]))
+
+    log.debug("%s: %d candidate skies, chose group %s at %.0f arcsec, "
+              "%.0f min away", frame.get("FILENAME"), len(scored),
+              sky.get("OBSGRP"), separation, interval)
+
+    _warn_if_far(frame, sky, max_radius_arcsec, separation)
+    return ind, sky
+
+
+def find_closest_sky(frame, master_skies, ranked_keylists=None,
+                     max_radius_arcsec=600.0, same_pointing_arcsec=60.0):
     """Find the best-matching sky, relaxing FILTER/ITIME/COADDS step by step
         and rescaling by exposure time and coadds for the looser matches.
 
@@ -383,6 +514,11 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None):
         Candidates.
     ranked_keylists : list of list of str, optional
         Matching criteria from strictest to loosest.
+    max_radius_arcsec : float, optional
+        Warn when even the nearest compatible sky is further than this.
+    same_pointing_arcsec : float, optional
+        Skies within this of each other count as the same place; the tie is
+        then broken by time.
 
     Returns
     -------
@@ -390,6 +526,13 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None):
         Position of the match in the list, or None.
     master : Frame or None
         The matching master, or None when nothing matched.
+
+    Notes
+    -----
+    The keylists decide which skies are *compatible*; among those,
+    :func:`choose_nearest_sky` decides which is *closest*. Compatibility
+    alone used to settle it by taking the first match, which on a night with
+    several sky sets meant whichever happened to be built first.
     """
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
                        else defaults.RANKED_SKIES_KEYLISTS)
@@ -398,9 +541,11 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None):
         return None, None
 
     for rank, keylist in enumerate(ranked_keylists):
-        ind, matched_sky = find_matching_master(frame, master_skies, keylist)
-        if matched_sky is None:
+        candidates = find_matching_masters(frame, master_skies, keylist)
+        if not candidates:
             continue
+        ind, matched_sky = choose_nearest_sky(
+            frame, candidates, max_radius_arcsec, same_pointing_arcsec)
 
         if "COADDS" not in keylist and "ITIME" in keylist:
             log.warning("Rescaling sky frame by COADDS %s -> %s",
@@ -439,6 +584,7 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
                  flat_override=None, allow_no_flat=False,
                  bad_pixel_mask_size=9, bad_pixel_plus_mask_size=11,
                  gain=1.0, saturation_limit=1e12, skip_sky_sub=True,
+                 sky_group_radius_arcsec=60.0, sky_max_radius_arcsec=600.0,
                  div_coadds=True, div_itime=True,
                  replacement_method="interpolation"):
     """Dark-subtract, flat-divide, and clean up a single science frame.
@@ -471,6 +617,15 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
         ``instrument.default_required_flat_type``.
     gain : float
         Multiplicative gain (e-/ADU) applied at the end.
+    skip_sky_sub : bool, optional
+        Do not subtract a master sky. On by default; the background is
+        normally removed per Wollaston beam inside the Stokes builder.
+    sky_group_radius_arcsec : float, optional
+        Skies within this of each other count as the same place, so the
+        choice between them falls to time. Match it to the radius the
+        masters were grouped with.
+    sky_max_radius_arcsec : float, optional
+        Warn when the nearest usable sky is further away than this.
     saturation_limit : float
         Pixels above this (within the bad-pixel mask) get "+"-shaped
         replacement, since saturation bleeds along detector columns.
@@ -539,11 +694,29 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
 
     reduced["SKYSUB"] = False
     if master_skies and not skip_sky_sub:
-        _, matched_sky = find_closest_sky(frame, master_skies)
+        _, matched_sky = find_closest_sky(
+            frame, master_skies,
+            max_radius_arcsec=sky_max_radius_arcsec,
+            same_pointing_arcsec=sky_group_radius_arcsec)
         if matched_sky is not None:
             log.info("Subtracting sky frame from %s", reduced.get("FILENAME"))
             reduced.data -= matched_sky.data
             reduced["SKYSUB"] = True
+
+            # Which sky, and how far off in space and time it was taken.
+            # A sky is a measurement of the background somewhere at some
+            # moment; a product that does not say where and when cannot be
+            # judged later.
+            separation = _sky_separation(frame, matched_sky)
+            interval = _sky_interval(frame, matched_sky)
+            reduced["SKYGRP"] = (matched_sky.get("OBSGRP"),
+                                 "observing group of the sky used")
+            if separation is not None:
+                reduced["SKYSEP"] = (round(float(separation), 1),
+                                     "arcsec from this frame to that sky")
+            if interval is not None:
+                reduced["SKYDT"] = (round(float(interval), 1),
+                                    "minutes from this frame to that sky")
 
     reduced.data = (reduced.data - dark_data) / flat_data
 

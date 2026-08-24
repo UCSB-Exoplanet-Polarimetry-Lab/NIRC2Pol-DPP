@@ -229,6 +229,157 @@ def scrub_header(header):
     return clean
 
 
+def pointing_of(frame):
+    """Where the telescope was pointing, in degrees.
+
+    Parameters
+    ----------
+    frame : Frame or Header
+        Anything with ``RA`` and ``DEC``.
+
+    Returns
+    -------
+    tuple of float, or None
+        ``(ra_deg, dec_deg)``, or None when either is missing or unreadable.
+
+    Notes
+    -----
+    NIRC2 stores ``RA`` sexagesimally **in hours** (``'04:55:45.53'``) and
+    ``DEC`` in degrees. :func:`nirc2pol.utils.angles.sexagesimal_to_degrees`
+    returns whatever unit went in, so the RA is multiplied by 15 here -- once,
+    in one place, rather than at each call site where forgetting it would
+    understate every separation by that factor.
+    """
+    from nirc2pol.utils.angles import sexagesimal_to_degrees
+
+    ra, dec = frame.get("RA"), frame.get("DEC")
+    if ra is None or dec is None:
+        return None
+    try:
+        return (sexagesimal_to_degrees(ra) * 15.0,
+                sexagesimal_to_degrees(dec))
+    except (TypeError, ValueError):
+        return None
+
+
+def observed_at(frame):
+    """When a frame was taken, as a datetime.
+
+    Parameters
+    ----------
+    frame : Frame or Header
+        Anything with ``DATE-OBS`` and ``UTC``.
+
+    Returns
+    -------
+    datetime.datetime, or None
+        None when either keyword is missing or unreadable.
+
+    Notes
+    -----
+    NIRC2 has no ``MJD-OBS``: the date and the time of day are separate
+    keywords, and ``UTC`` is sexagesimal hours.
+    """
+    import datetime
+
+    from nirc2pol.utils.angles import sexagesimal_to_degrees
+
+    date, utc = frame.get("DATE-OBS"), frame.get("UTC")
+    if not date or utc is None:
+        return None
+    try:
+        day = parse_date_obs(str(date))
+        hours = sexagesimal_to_degrees(utc)
+    except (TypeError, ValueError):
+        return None
+    return (datetime.datetime.combine(day, datetime.time())
+            + datetime.timedelta(hours=float(hours)))
+
+
+def group_by_pointing(frames, radius_arcsec=60.0, gap_minutes=30.0,
+                      keyword="OBSGRP"):
+    """Number frames into observing groups, and stamp the number on each.
+
+    A new group starts when the telescope has moved further than
+    ``radius_arcsec`` from where the current group started, or when more than
+    ``gap_minutes`` has passed since the previous frame. Both matter: two sky
+    sets visited back to back are only told apart by position, and one
+    pointing revisited hours later is only told apart by time.
+
+    Parameters
+    ----------
+    frames : list of Frame
+        Frames in the order observed. Sorted by time internally when every
+        frame carries one, so a caller need not have sorted them.
+    radius_arcsec : float, optional
+        How far the telescope may move within one group.
+    gap_minutes : float, optional
+        How long a pause may be within one group.
+    keyword : str, optional
+        Header keyword the group index is written to.
+
+    Returns
+    -------
+    dict
+        Group index -> the frames in it, in order.
+
+    Notes
+    -----
+    Frames with no readable pointing all land in one group and are warned
+    about: they cannot be told apart, and silently giving each its own group
+    would fragment a night into single-frame sets that then fall below any
+    minimum-frames rule.
+    """
+    from nirc2pol.utils.angles import small_angle_distance
+
+    if not frames:
+        return {}
+
+    times = {id(f): observed_at(f) for f in frames}
+    if all(times[id(f)] is not None for f in frames):
+        frames = sorted(frames, key=lambda f: times[id(f)])
+
+    unplaced = [f for f in frames if pointing_of(f) is None]
+    if unplaced:
+        log.warning(
+            "%d of %d frame(s) have no readable RA/DEC, so they cannot be "
+            "grouped by where they were taken and are kept together: %s",
+            len(unplaced), len(frames),
+            ", ".join(str(f.get("FILENAME")) for f in unplaced[:4]))
+
+    groups = {}
+    index = -1
+    anchor_point = None
+    previous_time = None
+
+    for frame in frames:
+        point = pointing_of(frame)
+        when = times[id(frame)]
+
+        moved = (anchor_point is not None and point is not None
+                 and small_angle_distance(anchor_point, point) * 3600.0
+                 > radius_arcsec)
+        paused = (previous_time is not None and when is not None
+                  and (when - previous_time).total_seconds() / 60.0
+                  > gap_minutes)
+
+        if index < 0 or moved or paused:
+            index += 1
+            anchor_point = point
+        elif anchor_point is None:
+            anchor_point = point
+
+        frame[keyword] = (index, "observing group: pointing and time")
+        groups.setdefault(index, []).append(frame)
+        if when is not None:
+            previous_time = when
+
+    if len(groups) > 1:
+        log.info("%d frame(s) fall into %d observing group(s) by pointing "
+                 "and time", len(frames), len(groups))
+    return groups
+
+
 def read_headers(paths):
     """Headers only, without reading a single pixel.
 
