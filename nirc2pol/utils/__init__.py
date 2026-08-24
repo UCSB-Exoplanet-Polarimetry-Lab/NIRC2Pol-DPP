@@ -31,7 +31,7 @@ from .angles import (angles_match, is_critical_angle, mean_angle,
                      par_angle, sexagesimal_to_degrees,
                      small_angle_distance)
 from .logs import ReductionLog, start_reduction_log
-from .paths import ObslogPaths, load_rejects, record_reject
+from .paths import ObslogPaths, link_frames, load_rejects, record_reject
 from .provenance import (describe, drop_step, pipeline_version,
                          record_step, steps_of)
 
@@ -58,6 +58,7 @@ __all__ = [
     "load_frames",
     "select_frames",
     "load_master",
+    "link_frames",
     "load_rejects",
     "make_annulus_mask",
     "make_circle_mask",

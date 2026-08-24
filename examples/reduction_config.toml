@@ -11,12 +11,20 @@
 # this reduction.
 
 [paths]
-# Root folder holding ONE SUBFOLDER PER NIGHT -- not the folder your FITS
-# files are in. Frames are read from <root>/<date>/raw/.
-observations_root = "/path/to/data_polmode"
+# Where the raw frames actually are. Read only -- the pipeline never
+# writes here, so this can be an archive or shared space you do not own.
+# The frames it reads are symlinked into reductions_root/raw/.
+raw_data_folder = "/path/to/raw/frames"
+
+# Where THIS reduction is written: raw/ (links), reduced/, plots/,
+# sequences/ and the masters. One folder per reduction, so two goes at the
+# same night do not overwrite each other.
+reductions_root = "/path/to/my_reduction"
 
 # The night, as DATE-OBS records it: UTC. A Keck night runs 04:00-16:00
 # UTC, so one UTC date names a whole night, one day after the HST evening.
+# It locates nothing -- it names the masters, log and frame table, and is
+# checked against the frames' own DATE-OBS.
 date = "2025-12-08"
 
 # Names the output files only. What the reduction covers is set by

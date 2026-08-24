@@ -28,6 +28,15 @@ log = logging.getLogger(__name__)
 #: instead means "use the default", which is not always the same thing.
 NONE_STRINGS = {"none", "null", ""}
 
+#: Options that have moved, so a config written against an older version
+#: gets told what to change rather than a list of every key that exists.
+RENAMED = {
+    "observations_root": "raw_data_folder (where the frames are) plus "
+                         "reductions_root (where this reduction is written) "
+                         "-- they used to be the same folder, and are not "
+                         "the same thing",
+}
+
 BACKGROUND_METHODS = ("mean_box", "annulus", "dither", None)
 REGISTER_METHODS = ("smooth_peak", "quantile_peak", "max", "min", "gaussian",
                     "centroid", "silhouette", "symmetry", "wings", "crosscorr")
@@ -53,16 +62,25 @@ class ReductionConfig:
     """Every choice one reduction makes, with defaults and allowed values."""
 
     # ---- where the data is -------------------------------------------
-    observations_root: str = _f(
-        "/path/to/data_polmode",
-        "Root folder holding ONE SUBFOLDER PER NIGHT -- not the folder your "
-        "FITS files are in. Frames are read from <root>/<date>/raw/.",
+    raw_data_folder: str = _f(
+        "/path/to/raw/frames",
+        "Where the raw frames actually are. Read only -- the pipeline never "
+        "writes here, so this can be an archive or shared space you do not "
+        "own. The frames it reads are symlinked into "
+        "reductions_root/raw/.",
+        "paths")
+    reductions_root: str = _f(
+        "/path/to/my_reduction",
+        "Where THIS reduction is written: raw/ (links), reduced/, plots/, "
+        "sequences/ and the masters. One folder per reduction, so two goes "
+        "at the same night do not overwrite each other.",
         "paths")
     date: str = _f(
         "2025-12-08",
         "The night, as DATE-OBS records it: UTC. A Keck night runs 04:00-16:00 "
         "UTC, so one UTC date names a whole night, one day after the HST "
-        "evening.",
+        "evening. It locates nothing -- it names the masters, log and frame "
+        "table, and is checked against the frames' own DATE-OBS.",
         "paths")
     target: str = _f(
         "AB_Aur",
@@ -240,6 +258,14 @@ class ReductionConfig:
         known = {f.name for f in fields(cls)}
         unknown = set(flat) - known
         if unknown:
+            renamed = [f"{k} is now {RENAMED[k]}" for k in sorted(unknown)
+                       if k in RENAMED]
+            if renamed:
+                # No path in the message: the caller that has one prefixes
+                # it, and the other validation errors here do the same.
+                raise ValueError(
+                    "uses options that have been renamed: "
+                    + "; ".join(renamed) + ".")
             raise ValueError(
                 f"{path} sets options this version does not know: "
                 f"{sorted(unknown)}. Known options: {sorted(known)}.")

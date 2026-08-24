@@ -80,20 +80,21 @@ def run(cfg, config_path=None):
     Notes
     -----
     Writes as it goes -- masters, corrected frames, per-cycle and median
-    Stokes products -- under ``cfg.observations_root/cfg.date``. What is kept
+    Stokes products -- under ``cfg.reductions_root``. What is kept
     is itself a choice: see ``save_preproc`` and ``save_individual_cycles``.
     """
     # No subclass needed: the config sets the five per-dataset attributes on
     # the instance. Subclass NIRC2PolarimetryData only to change behaviour --
     # override a method, describe a night the base class cannot.
     instrument = cfg.configure(nirc2.NIRC2PolarimetryData())
-    paths = ObslogPaths(cfg.observations_root, cfg.date)
+    paths = ObslogPaths(cfg.reductions_root, cfg.date)
 
-    # Find the frames before anything is created or written. A mistyped date
-    # or a wrong root should fail saying which folder it looked in, not leave
-    # a tree of empty folders and a log file behind as the only evidence of a
-    # reduction that never happened.
-    raw_files = paths.raw_files(frame_range=cfg.raw_range)
+    # The frames stay where they are; raw/ gets links to the ones this run
+    # reads, so the reduction folder records its own inputs and the archive
+    # is never written to. Nothing is created until the frames are known to
+    # exist, so a wrong raw_data_folder leaves no empty tree behind.
+    raw_files = paths.link_raw_frames(cfg.raw_data_folder,
+                                      frame_range=cfg.raw_range)
 
     paths.make_folders()
     # Frames excluded from every run of this night, each with a reason. Add one
@@ -116,12 +117,10 @@ def run(cfg, config_path=None):
                  instrument.top_row_start, instrument.beam_x_offset)
 
     # --- 1. sort raw frames by type ------------------------------------------
-    # The frames were found above. cfg.raw_range has already narrowed them:
-    # that is what is read off disk at all, and is distinct from
-    # select_frame_range, which picks the science frames -- raw_range has to
-    # stay wide enough to include the darks and flats, or the masters cannot
-    # be built.
-    log.info("%d raw file(s) in %s", len(raw_files), paths.raw_folder)
+    # The frames were linked above, and cfg.raw_range decided which: that is
+    # what is read off disk at all, and is distinct from select_frame_range,
+    # which picks the science frames -- raw_range has to stay wide enough to
+    # include the darks and flats, or the masters cannot be built.
     sorted_files = instrument.sort_frames(raw_files)
 
     # --- 2. master darks / flats / skies -------------------------------------

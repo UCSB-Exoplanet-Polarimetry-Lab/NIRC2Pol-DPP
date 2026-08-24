@@ -1,17 +1,28 @@
-"""Standard on-disk layout for one night of observations.
+"""Standard on-disk layout for one reduction.
 
-Mirrors AIR.jl's ObslogPaths::
+Descended from AIR.jl's ObslogPaths. Everything here is *output*: the folder
+a reduction writes, which is deliberately not the folder the raw frames came
+from. Those are two different things -- an archive of frames you may not own
+and did not create, and the result of one reduction of them -- and conflating
+them means the pipeline cannot be pointed at an archive at all, and writes
+into it when it can::
 
-    observations_folder/
-        <date>/
-            raw/          raw FITS frames
-            reduced/      dark-subtracted, flat-divided frames
-            sequences/    centered / derotated / combined products
-            plots/
-            darks.fits    master darks   (multi-extension)
-            flats.fits    master flats
-            skies.fits    master skies
-            master_mask.fits
+    reductions_root/
+        raw/          symlinks to the frames this reduction reads
+        reduced/      dark-subtracted, flat-divided frames
+        sequences/    centered / derotated / combined products
+        plots/
+        master_darks_<date>.fits
+        master_flats_<date>.fits
+        master_skies_<date>.fits
+        master_mask_<date>.fits
+        reduction_<date>.log
+        <date>_rejects.toml
+        <date>_reduced_frames_table.txt
+
+``date`` locates nothing. It names the masters and the log, and is checked
+against the frames' own DATE-OBS -- which is all it was ever really doing.
+:func:`link_frames` populates ``raw/`` from wherever the frames actually live.
 """
 
 from __future__ import annotations
@@ -29,34 +40,34 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class ObslogPaths:
-    """Standard folder layout for one night of observations.
+    """Folder layout for one reduction, rooted where it writes.
 
-    Mirrors AIR.jl's ``ObslogPaths``. Constructed from the root
-    observations folder and a date; every other path is derived, so a
-    reduction script names the night once.
+    Descended from AIR.jl's ``ObslogPaths``. Constructed from the folder this
+    reduction writes to and the date of the night it covers; every other path
+    is derived, so a reduction script names them once::
 
-    The layout is two levels deep -- the root holds one folder per night, and
-    the frames sit inside that, not in the root itself::
+        /home/you/reductions/AB_Aur_Lp/   <- reductions_root
+            raw/                          <- symlinks, see link_frames
+            reduced/  sequences/  plots/
+            master_darks_2025-12-08.fits
+            reduction_2025-12-08.log
 
-        /data/nirc2pol/          <- observations_folder
-          2025-12-08/            <- date
-            raw/  *.fits         <- raw frames
-            reduced/ sequences/  <- written by the reduction
+    The raw frames are somewhere else entirely, and stay there: pass their
+    folder to :meth:`link_raw_frames`.
 
     Parameters
     ----------
-    observations_folder : str
-        Root folder holding one subfolder per night. Not the folder the FITS
-        files themselves are in; see the tree above.
+    reductions_root : str
+        Folder this reduction writes to. Not where the raw frames live.
     date : str
-        Night identifier, used as the subfolder name (e.g. ``"2026-06-05"``).
+        The night, UTC (e.g. ``"2026-06-05"``). Names the masters, log and
+        frame table, and is checked against the frames' DATE-OBS by
+        :meth:`check_frame_dates`. It locates nothing.
 
     Attributes
     ----------
-    data_folder : str
-        ``observations_folder/date``.
     raw_folder, reduced_folder, sequences_folder, plots_folder : str
-        The per-night subfolders.
+        Subfolders of ``reductions_root``.
     darks_file, flats_file, skies_file, master_mask_file : str
         Multi-extension master files, as written by
         :func:`nirc2pol.utils.frame.save_frames`.
@@ -64,10 +75,9 @@ class ObslogPaths:
         TOML list of frames to exclude; see :func:`load_rejects`.
     """
 
-    observations_folder: str
+    reductions_root: str
     date: str
 
-    data_folder: str = field(init=False)
     raw_folder: str = field(init=False)
     reduced_folder: str = field(init=False)
     plots_folder: str = field(init=False)
@@ -82,21 +92,20 @@ class ObslogPaths:
     masks_file: str = field(init=False)
 
     def __post_init__(self):
-        """Derive every path from ``observations_folder`` and ``date``."""
-        self.data_folder = os.path.join(self.observations_folder, self.date)
-
-        self.raw_folder = os.path.join(self.data_folder, "raw")
-        self.reduced_folder = os.path.join(self.data_folder, "reduced")
-        self.plots_folder = os.path.join(self.data_folder, "plots")
-        self.sequences_folder = os.path.join(self.data_folder, "sequences")
+        """Derive every path from ``reductions_root`` and ``date``."""
+        self.raw_folder = os.path.join(self.reductions_root, "raw")
+        self.reduced_folder = os.path.join(self.reductions_root, "reduced")
+        self.plots_folder = os.path.join(self.reductions_root, "plots")
+        self.sequences_folder = os.path.join(self.reductions_root, "sequences")
 
         # everything the reduction logged, in one file beside the products
         self.log_file = os.path.join(
-            self.data_folder, f"reduction_{self.date}.log")
+            self.reductions_root, f"reduction_{self.date}.log")
 
-        self.rejects_file = os.path.join(self.data_folder, f"{self.date}_rejects.toml")
+        self.rejects_file = os.path.join(
+            self.reductions_root, f"{self.date}_rejects.toml")
         self.table_file = os.path.join(
-            self.data_folder, f"{self.date}_reduced_frames_table.txt")
+            self.reductions_root, f"{self.date}_reduced_frames_table.txt")
 
         # Masters carry the date because they belong to the dataset they
         # were taken with. Darks and flats are taken with every dataset and
@@ -104,13 +113,13 @@ class ObslogPaths:
         # reuse and leaves no trace when it happens. The date matches the
         # rejects and frame-table files above.
         self.darks_file = os.path.join(
-            self.data_folder, f"master_darks_{self.date}.fits")
+            self.reductions_root, f"master_darks_{self.date}.fits")
         self.flats_file = os.path.join(
-            self.data_folder, f"master_flats_{self.date}.fits")
+            self.reductions_root, f"master_flats_{self.date}.fits")
         self.skies_file = os.path.join(
-            self.data_folder, f"master_skies_{self.date}.fits")
+            self.reductions_root, f"master_skies_{self.date}.fits")
         self.masks_file = os.path.join(
-            self.data_folder, f"master_mask_{self.date}.fits")
+            self.reductions_root, f"master_mask_{self.date}.fits")
 
     def raw_files(self, frame_range=None, pattern="*.fits*"):
         """The night's raw frames, in name order.
@@ -134,15 +143,12 @@ class ObslogPaths:
         Raises
         ------
         FileNotFoundError
-            When the night has no frames to reduce, either way of getting
-            there: nothing matching in ``raw_folder``, or files there but
-            ``frame_range`` excluding every one. The message says which, and
-            says so explicitly when the frames turn out to be sitting in
-            ``observations_folder`` instead -- the layout mistake this
-            exists to catch. One exception type because from the caller's
-            side the two are the same condition, and the command line can
-            then report both as the user errors they are rather than as
-            tracebacks.
+            When there is nothing to reduce, either way of getting there:
+            ``raw_folder`` empty, or files there but ``frame_range``
+            excluding every one. One exception type because from the
+            caller's side the two are the same condition, and the command
+            line can then report both as the user errors they are rather
+            than as tracebacks.
 
         Notes
         -----
@@ -154,20 +160,11 @@ class ObslogPaths:
         found = sorted(glob.glob(os.path.join(self.raw_folder, pattern)))
 
         if not found:
-            # The usual cause: an archive folder holding the frames directly,
-            # with no <date>/raw/ beneath it. Say so rather than making the
-            # user work it out from an empty result.
-            loose = sorted(glob.glob(os.path.join(self.observations_folder,
-                                                  pattern)))
-            hint = ""
-            if loose:
-                hint = (f" {len(loose)} frame(s) do sit directly in "
-                        f"{self.observations_folder}; this layout is two "
-                        f"levels deep, so they belong in {self.raw_folder} "
-                        f"(a symlink is enough).")
             raise FileNotFoundError(
-                f"No raw frames matching {pattern!r} in {self.raw_folder}."
-                + hint)
+                f"No raw frames matching {pattern!r} in {self.raw_folder}. "
+                f"That folder is filled by link_raw_frames from wherever the "
+                f"frames actually live -- cfg.raw_data_folder for a "
+                f"reduction.")
 
         if frame_range is None:
             return found
@@ -179,6 +176,29 @@ class ObslogPaths:
                 f"in {self.raw_folder}. It is read from the filename, so "
                 f"check the numbers against what is there.")
         return kept
+
+    def link_raw_frames(self, source_folder, frame_range=None,
+                        pattern="*.fits*"):
+        """Fill ``raw_folder`` with links to the frames this run will read.
+
+        Thin wrapper on :func:`link_frames`, which carries the detail.
+
+        Parameters
+        ----------
+        source_folder : str
+            Where the raw frames actually are. Never written to.
+        frame_range : tuple or list of tuple, optional
+            Which frames to link; see :func:`link_frames`.
+        pattern : str, optional
+            Glob for the raw files.
+
+        Returns
+        -------
+        list of str
+            The links, sorted -- the frames this reduction reads.
+        """
+        return link_frames(source_folder, self.raw_folder,
+                           frame_range=frame_range, pattern=pattern)
 
     def check_frame_dates(self, frames, keyword="DATE-OBS"):
         """Warn when the dataset folder's date disagrees with its frames.
@@ -223,6 +243,112 @@ class ObslogPaths:
         for folder in (self.reduced_folder, self.plots_folder,
                        self.sequences_folder):
             os.makedirs(folder, exist_ok=True)
+
+
+def link_frames(source_folder, dest_folder, frame_range=None,
+                pattern="*.fits*"):
+    """Symlink raw frames into a reduction's own folder.
+
+    The frames stay where they are -- an archive, shared space, a mounted
+    volume -- and the reduction folder gets links to exactly the ones it
+    reads. That makes ``dest_folder`` a record of this run's inputs without
+    copying a byte, and it is why a reduction never has to be run inside the
+    data it reduces.
+
+    Parameters
+    ----------
+    source_folder : str
+        Where the frames actually are. Only read from.
+    dest_folder : str
+        Where the links go, created if absent -- but only once there is
+        something to put in it.
+    frame_range : tuple or list of tuple, optional
+        Link only frames whose observation number falls inside one of these
+        inclusive ranges; see :func:`nirc2pol.utils.frame.in_frame_range`.
+        Read from the filename, so nothing is opened. None links everything
+        matching ``pattern``.
+    pattern : str, optional
+        Glob for the frames. The default ends in ``*`` so gzipped archive
+        frames (``n0902.fits.gz``) are picked up too.
+
+    Returns
+    -------
+    list of str
+        The paths in ``dest_folder``, sorted. These are what to reduce.
+
+    Raises
+    ------
+    FileNotFoundError
+        When ``source_folder`` holds nothing matching, or ``frame_range``
+        excluded every file. Checked *before* anything is created, so a
+        mistyped source leaves no empty folders behind.
+
+    Notes
+    -----
+    Idempotent, and careful about what it replaces. A link already pointing
+    at the same file is left alone. A **stale** link -- one pointing
+    somewhere else, which is what a re-pointed source leaves behind -- is
+    replaced. A **real file** of that name is never touched, only warned
+    about: that is somebody's actual data, and this function has no business
+    deleting it.
+
+    Link targets are absolute, so the reduction folder can be moved without
+    breaking them. Source and destination being the same folder is a no-op:
+    the frames are already where they need to be.
+    """
+    source_folder = os.path.abspath(os.path.expanduser(source_folder))
+    dest_folder = os.path.abspath(os.path.expanduser(dest_folder))
+
+    found = sorted(glob.glob(os.path.join(source_folder, pattern)))
+    if not found:
+        raise FileNotFoundError(
+            f"No frames matching {pattern!r} in {source_folder}.")
+
+    if frame_range is not None:
+        kept = [f for f in found if in_frame_range(f, frame_range)]
+        if not kept:
+            raise FileNotFoundError(
+                f"Frame range {frame_range} excluded all {len(found)} "
+                f"frame(s) in {source_folder}. It is read from the filename, "
+                f"so check the numbers against what is there.")
+        found = kept
+
+    if source_folder == dest_folder:
+        log.info("%d frame(s) already in %s; nothing to link",
+                 len(found), dest_folder)
+        return found
+
+    os.makedirs(dest_folder, exist_ok=True)
+
+    links, created, reused, skipped = [], 0, 0, 0
+    for src in found:
+        dest = os.path.join(dest_folder, os.path.basename(src))
+        if os.path.islink(dest):
+            if os.path.realpath(dest) == os.path.realpath(src):
+                reused += 1
+                links.append(dest)
+                continue
+            # Points somewhere else: a source that has moved, or a config
+            # re-pointed at different data. Replacing a link destroys
+            # nothing.
+            os.unlink(dest)
+        elif os.path.exists(dest):
+            log.warning(
+                "%s is a real file, not a link, so it is left as it is and "
+                "will be read instead of %s. Remove it if that is not what "
+                "you want -- this will not delete data it did not create.",
+                dest, src)
+            skipped += 1
+            links.append(dest)
+            continue
+
+        os.symlink(src, dest)
+        created += 1
+        links.append(dest)
+
+    log.info("%d frame(s) in %s: %d linked, %d already there, %d left alone",
+             len(links), dest_folder, created, reused, skipped)
+    return sorted(links)
 
 
 def load_rejects(rejects_file):
