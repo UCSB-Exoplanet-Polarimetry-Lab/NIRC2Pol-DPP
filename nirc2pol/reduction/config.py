@@ -424,9 +424,15 @@ class ReductionConfig(TomlConfig):
         "skies", unit="arcsec")
     beam_top_row: int = config_field(
         None,
-        "Beam geometry, if you are overriding it. none measures it from the "
-        "data, which is the intended path -- the separation moves between "
-        "epochs and a stale value fails silently.",
+        "Where split_beams cuts the top beam out, if you are overriding it. "
+        "none uses the nominal value for the band, which is the intended "
+        "path.\n"
+        "\n"
+        "This is NOT a calibration and does not need to be exact. Whatever "
+        "offset the cut leaves between the two beams is measured and "
+        "removed per frame by align_beams during registration. Set it only "
+        "if a beam is being cut off entirely -- which would mean the band "
+        "is missing from the [beam_geometry] table in nirc2.toml.",
         "geometry", unit="px")
     beam_x_offset: int = config_field(None, "See beam_top_row.", "geometry",
                                       unit="px")
@@ -610,11 +616,13 @@ class ReductionConfig(TomlConfig):
         method, add an instrument, model a night the base class cannot
         describe. Setting five values is not a reason.
 
-        The beam geometry is assigned even when None, which is the usual
-        case: None means "measure it from the data", and
-        :func:`nirc2pol.reduction.fit_beam_geometry` fills it in
-        afterwards. Call this before measuring, not after, or it will
-        overwrite what was measured.
+        The beam cutout is assigned even when None, which is the usual case:
+        None means "use the nominal value for this band", which
+        :func:`nirc2pol.polmode.run` fills in from the instrument's
+        ``beam_geometry_for``. Setting it explicitly only moves where the
+        beams are cut; it is not a calibration, because
+        :func:`nirc2pol.reduction.align_beams` removes whatever offset the
+        cut leaves.
         """
         instrument.background_method = self.background_method
         instrument.background_box = self.background_box

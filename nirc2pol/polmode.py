@@ -7,8 +7,8 @@ workflow in order:
     2. build master darks / flats / skies
     3. choose the science frames this reduction covers
     4. pre-process them (dark, flat, bad pixels)
-    5. measure the beam geometry -- before any dither subtraction, which
-       would leave a negative image of the star for the centroid to find
+    5. set the nominal beam cutout for the band (approximate by design; the
+       residual is removed per frame by align_beams during registration)
     6. dither subtraction, when cfg.background_method asks for it
     7. HWP cycle matching
     8. fast axis offset (cfg.fast_axis_method) and instrumental polarization
@@ -51,10 +51,9 @@ from nirc2pol.polarimetry import (ProductWriter, apply_mueller_model,
                                   build_stokes_cubes, fit_ip_uphi,
                                   fit_ip_uphi_all, mean_ip,
                                   fit_fast_axis_butterfly, median_stokes_cube)
-from nirc2pol.reduction import (fit_beam_geometry, make_master_darks,
-                                make_master_flats, make_master_masks,
-                                make_master_skies, reduce_frame,
-                                subtract_dither_background)
+from nirc2pol.reduction import (make_master_darks, make_master_flats,
+                                make_master_masks, make_master_skies,
+                                reduce_frame, subtract_dither_background)
 from nirc2pol.utils import (ObslogPaths, load_frames, load_rejects,
                             read_headers, save_frames, select_frames,
                             start_reduction_log)
@@ -229,23 +228,20 @@ def run(cfg, config_path=None):
         )
         reduced_frames.append(reduced)
 
-    # --- 5. beam geometry, measured before any dither subtraction ------------
-    # Where the two beams sit. The separation moves between epochs, so it is
-    # measured every time rather than looked up: a value written down once
-    # goes stale without saying so. Nothing downstream can undo a wrong one --
-    # registration shifts both beams together -- so split_beams refuses until
-    # this has run.
-    #
-    # Before the dither, deliberately. A dither-subtracted frame carries a
-    # NEGATIVE image of the star a few arcsec from the positive one, and the
-    # centroid cannot tell them apart: on the 2025-12-06 standard it measured
-    # beam_x_offset 29.64 with 102 px of scatter, where the same frames
-    # before subtraction give 12.13 with 0.01 px. Geometry is a property of
-    # the optics, so measure it on frames that still have one star in them.
+    # --- 5. beam cutout ------------------------------------------------------
+    # Where split_beams cuts the two beams out. Nominal per-band values, not
+    # a measurement: they only have to contain each beam. Whatever offset
+    # they leave between the beams is removed per frame by align_beams during
+    # registration, which is both simpler and more accurate than choosing
+    # this pair well -- the beams are rotated ~0.37 deg relative to each
+    # other, so their separation depends on where the source sits in the
+    # field and no single pair is right at more than one position.
     if instrument.top_row_start is None or instrument.beam_x_offset is None:
-        instrument.top_row_start, instrument.beam_x_offset = fit_beam_geometry(
-            instrument, reduced_frames)
-    log.info("beam geometry: top row %d, x offset %d",
+        band = nirc2.band_of(reduced_frames[0]) if reduced_frames else None
+        instrument.top_row_start, instrument.beam_x_offset = (
+            type(instrument).beam_geometry_for(band))
+    log.info("beam cutout: top row %d, x offset %d (nominal; align_beams "
+             "removes the residual per frame)",
              instrument.top_row_start, instrument.beam_x_offset)
 
     # --- 6. dither subtraction -----------------------------------------------

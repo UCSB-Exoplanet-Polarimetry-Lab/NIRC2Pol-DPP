@@ -790,7 +790,112 @@ def measure_beam_offset(stack, method="centroid", center=None,
     return (cy1 - cy0, cx1 - cx0)
 
 
+def align_beams(stack, fill=0.0, crop_size=128, upsample=20,
+                center=None, max_shift=25.0):
+    """Shift beam 1 onto beam 0 so the two sample the same sky per pixel.
+
+    Parameters
+    ----------
+    stack : ndarray
+        ``(2, ny, nx)`` beam stack, beam 0 bottom and beam 1 top, as returned
+        by an instrument's ``split_beams``.
+    fill : float, optional
+        Value for pixels shifted in from outside.
+    crop_size : int or None, optional
+        Cross-correlate inside a box this size about the source rather than
+        over the whole beam. The same box is cut from both, so the shift is
+        unchanged, and a smaller box keeps a dither-subtracted frame's
+        negative image out of the correlation. None uses the whole beam.
+    upsample : int, optional
+        Sub-pixel precision of the cross-correlation.
+    center : tuple of float, optional
+        ``(cy, cx)`` to crop about. Defaults to the source position on the
+        mean of the two beams.
+    max_shift : float, optional
+        Refuse shifts larger than this, in pixels. Two beams of one field
+        through one optic cannot credibly be further apart than this, so a
+        larger reading means the correlation locked onto the wrong feature.
+
+    Returns
+    -------
+    aligned : ndarray
+        The ``(2, ny, nx)`` stack with beam 1 shifted onto beam 0.
+    shift : tuple of float
+        The ``(dy, dx)`` removed, beam 1 minus beam 0. ``(0.0, 0.0)`` when no
+        shift was applied.
+
+    Notes
+    -----
+    This is what makes the beam cutout geometry a don't-care. ``split_beams``
+    slices on two integers and can only ever be approximately right: the
+    Wollaston's two beams are rotated relative to each other by about
+    0.37 degrees, so their separation depends on where in the field the source
+    sits -- 2.2 px across a 300 px dither throw on real data -- and no single
+    integer pair is correct at more than one position. Measuring the residual
+    per frame and removing it here is both simpler and strictly more accurate
+    than trying to choose that pair well.
+
+    It is safe for the polarimetry because polarization is a flux *ratio*
+    between the beams, not a difference in position. At the percent level the
+    two beams are near-identical in structure, so the cross-correlation is
+    driven by what they share, not by the signal being measured.
+
+    Cross-correlation rather than centering each beam: it measures the two
+    beams against each other directly, so it needs no threshold and no
+    absolute position, and it does not care that one beam is brighter than
+    the other. Centroids were tried and are the fragile part -- they lock onto
+    a thermal pedestal, and on a saturated core they find a different rim peak
+    in each beam.
+
+    What this cannot do is undo the rotation. It nulls the offset at the
+    source and leaves roughly ``0.0065 * r`` pixels at radius ``r`` from it:
+    0.16 px at 25 px, 0.33 px at 50 px.
+    """
+    stack = np.asarray(stack, dtype=float)
+    if stack.ndim != 3 or stack.shape[0] != 2:
+        raise ValueError("expected a (2, ny, nx) beam stack, got shape "
+                         f"{stack.shape}")
+
+    a, b = stack[0], stack[1]
+    if crop_size is not None:
+        if np.isscalar(crop_size):
+            crop_size = (int(crop_size), int(crop_size))
+        if center is None:
+            center = find_center_smooth(np.nanmean(stack, axis=0))
+        try:
+            # the identical box from both beams, so the shift survives
+            a = crop(stack[0], crop_size, center=center)[0]
+            b = crop(stack[1], crop_size, center=center)[0]
+        except ValueError:
+            log.debug("beam alignment crop %s about %s does not fit; using "
+                      "the full beam", crop_size, center)
+            a, b = stack[0], stack[1]
+
+    try:
+        dy, dx = _phase_shift(a, b, upsample)
+    except Exception:
+        log.warning("Beam alignment cross-correlation failed, so the two "
+                    "beams are left as split_beams cut them. Any offset "
+                    "between them will survive into the double difference.")
+        return stack, (0.0, 0.0)
+
+    if not np.isfinite([dy, dx]).all() or np.hypot(dy, dx) > max_shift:
+        log.warning(
+            "Beam alignment measured (dy=%+.1f, dx=%+.1f) px, beyond the "
+            "%.0f px this can credibly be, so the beams are left as cut: the "
+            "cross-correlation has not matched the same source in both. "
+            "Check the cutout geometry for this band.", dy, dx, max_shift)
+        return stack, (0.0, 0.0)
+
+    # Same sign convention as align_frames: _phase_shift returns the shift to
+    # APPLY to the moving image, not the offset to undo.
+    aligned = stack.copy()
+    aligned[1] = translate(stack[1], dy, dx, fill=fill)
+    return aligned, (dy, dx)
+
+
 def register_beam_stack(stack, method="smooth_peak", fill=0.0,
+                        align_beams_first=True, beam_align_crop=128,
                         check_beam_alignment=True, beam_alignment_tol=1.5,
                         beam_alignment_method="centroid",
                         beam_alignment_crop=240, beam_alignment_max=50.0,
@@ -809,6 +914,14 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0,
         Centering algorithm, as for :func:`find_center`.
     fill : float, optional
         Value for pixels shifted in from outside.
+    align_beams_first : bool, optional
+        Shift beam 1 onto beam 0 with :func:`align_beams` before registering
+        the pair. On by default: it is what lets the cutout geometry be an
+        approximate constant instead of a fitted value, and it is measured
+        per frame, so a dithered sequence gets the right correction at each
+        position. Turn it off only to reproduce an older reduction.
+    beam_align_crop : int or None, optional
+        Box size for that cross-correlation; see :func:`align_beams`.
     check_beam_alignment : bool, optional
         Warn when the two beams are not aligned with each other, which means
         the instrument's beam extraction geometry is wrong. On by default:
@@ -854,22 +967,32 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0,
 
     Notes
     -----
-    Both beams are shifted by the *same* offset, found on their mean, so their
-    relative registration is preserved -- that alignment is what the double
-    difference depends on. Warns when the chosen centre is far from the
-    smoothed peak, since that usually means the finder locked onto the frame
-    edge rather than the star.
+    Two steps, in order. :func:`align_beams` first removes the offset
+    *between* the beams, so they sample the same sky per pixel -- that
+    alignment is what the double difference depends on. Then both are shifted
+    by the *same* offset, found on their mean, which centres the pair without
+    disturbing the alignment just established.
+
+    Warns when the chosen centre is far from the smoothed peak, since that
+    usually means the finder locked onto the frame edge rather than the star.
     """
     stack = np.asarray(stack, dtype=float)
+
+    # Align the two beams to each other FIRST. Everything after this assumes
+    # one sky sampled twice on one pixel grid; before it, the cutout is only
+    # as good as two integers can be.
+    if align_beams_first:
+        stack, _beam_shift = align_beams(stack, fill=fill,
+                                         crop_size=beam_align_crop)
+
     mean_beam = np.nanmean(stack, axis=0)
     cy, cx = find_center(mean_beam, method=method, **kwargs)
 
-    # The two beams are one sky through one optic, so any offset between
-    # them is a beam-extraction error. Shifting both by a single offset
-    # preserves it by design, and the double difference then turns it into a
-    # dipole, so warn here -- this is the last point where the two beams are
-    # still separable. A finder that fails on one beam is not evidence of
-    # anything, so a failure to measure is not reported.
+    # Confirm the alignment took. This is the last point where the two beams
+    # are still separable, and a residual offset here goes into the double
+    # difference as a dipole that nothing downstream can remove. A finder
+    # that fails on one beam is not evidence of anything, so a failure to
+    # measure is not reported.
     if check_beam_alignment:
         try:
             dy, dx = measure_beam_offset(stack, method=beam_alignment_method,
@@ -886,20 +1009,19 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0,
                     "error, so this is being reported as a failed "
                     "measurement rather than a misalignment: %r centering "
                     "has most likely not found the same source in both "
-                    "beams. The geometry may still be wrong -- check it with "
-                    "reduction.fit_beam_geometry(instrument, frames).", dy, dx,
+                    "beams. The cutout geometry for this band may still be "
+                    "wrong enough to miss a beam.", dy, dx,
                     beam_alignment_method)
             elif offset > beam_alignment_tol:
                 log.warning(
-                    "Beams are misaligned by (dy=%+.2f, dx=%+.2f) px, above "
-                    "the %.2f px tolerance: the beam extraction geometry is "
-                    "probably wrong. Registration shifts both beams "
-                    "together, so this offset will survive into the double "
-                    "difference as a dipole. Re-measure with "
-                    "reduction.fit_beam_geometry(instrument, frames) and "
-                    "assign the result, or pass "
-                    "check_beam_alignment=False if the source is one that "
-                    "%r centering cannot locate per beam.",
+                    "Beams are still misaligned by (dy=%+.2f, dx=%+.2f) px "
+                    "after alignment, above the %.2f px tolerance, so this "
+                    "offset will survive into the double difference as a "
+                    "dipole. Either the cross-correlation did not lock on -- "
+                    "check that the source is compact and well exposed -- or "
+                    "%r centering cannot locate this source per beam, in "
+                    "which case pass check_beam_alignment=False. If "
+                    "align_beams_first is off, turn it on.",
                     dy, dx, beam_alignment_tol, beam_alignment_method)
 
     # Sanity check: a centre far from the flux-weighted position of the
@@ -1095,83 +1217,3 @@ def fit_2d_gaussian(data, initial_guess, fixed_sigma=None):
                            np.asarray(initial_guess, dtype=float))
     return result.x
 
-def fit_beam_geometry(instrument, frames, top_row_start=None,
-                      beam_x_offset=None, method="centroid", **kwargs):
-    """Measure where the two Wollaston beams sit, from the data.
-
-    Parameters
-    ----------
-    instrument : PolarimetryData
-        Supplies ``split_beams`` and the background setting. Its own
-        geometry attributes are not read, so this works before they are set.
-    frames : Frame or sequence of Frame
-        Frames with a bright, compact source. Several are better than one:
-        the sub-pixel offsets are averaged before rounding, which settles a
-        geometry that falls near a half pixel instead of letting each frame
-        round it differently.
-    top_row_start, beam_x_offset : int, optional
-        Where to start looking. Defaults to the instrument's search seed.
-        The search is local but forgiving -- on real data it converges from
-        eleven rows away -- so a neighbouring epoch's numbers are ample.
-    method : str, optional
-        Centering algorithm, as for :func:`measure_beam_offset`.
-    **kwargs
-        Passed to the centering algorithm.
-
-    Returns
-    -------
-    tuple of int
-        ``(top_row_start, beam_x_offset)``, rounded to whole pixels because
-        :meth:`split_beams` slices on integers.
-
-    Notes
-    -----
-    Measured rather than looked up. The separation is a property of this
-    dataset and takes one pass to obtain, so recording values per epoch and
-    trusting them later buys nothing and goes stale silently.
-
-    The background is subtracted before measuring: on a raw thermal-infrared
-    beam a threshold-based centroid finds the pedestal, which is common to
-    both beams, and reports no offset however wrong the geometry is.
-    """
-    # NB: a bare ndarray has no .header, and list() on a 2D array iterates
-    # its rows -- so testing only for the header quietly turns one image
-    # into a list of 1D slices.
-    if hasattr(frames, "header") or isinstance(frames, np.ndarray):
-        frames = [frames]
-    else:
-        frames = list(frames)
-    if not frames:
-        raise ValueError("fit_beam_geometry needs at least one frame")
-
-    seed_top, seed_x = instrument.beam_geometry_seed()
-    top_row_start = seed_top if top_row_start is None else top_row_start
-    beam_x_offset = seed_x if beam_x_offset is None else beam_x_offset
-
-    offsets = []
-    for frame in frames:
-        stack = instrument.subtract_background(
-            instrument.split_beams(frame, top_row_start=top_row_start,
-                                   beam_x_offset=beam_x_offset))
-        offsets.append(measure_beam_offset(stack, method=method, **kwargs))
-
-    dy = float(np.mean([o[0] for o in offsets]))
-    dx = float(np.mean([o[1] for o in offsets]))
-    exact_top, exact_x = top_row_start + dy, beam_x_offset + dx
-
-    log.info("beam geometry measured from %d frame(s): top_row_start=%.2f, "
-             "beam_x_offset=%.2f (scatter %.2f, %.2f px)", len(frames),
-             exact_top, exact_x,
-             float(np.std([o[0] for o in offsets])),
-             float(np.std([o[1] for o in offsets])))
-
-    for name, value in (("top_row_start", exact_top),
-                        ("beam_x_offset", exact_x)):
-        if abs(value - np.floor(value) - 0.5) < 0.15:
-            log.warning(
-                "Measured %s = %.2f sits between pixels, so rounding either "
-                "way leaves about half a pixel of beam misalignment. Compare "
-                "both by reducing with each and seeing which gives less "
-                "U_phi.", name, value)
-
-    return int(round(exact_top)), int(round(exact_x))

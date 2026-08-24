@@ -6,10 +6,10 @@ nights is unsafe with this pipeline: ``find_closest_flat`` matches on filter
 and detector size and never on date, so one night's frames can be
 flat-fielded with the other night's flat without a word; ``make_master_darks``
 groups on exposure settings alone, merging two nights' darks into one master;
-and ``fit_beam_geometry`` over a pooled list returns a single averaged
-geometry for two epochs, which nothing downstream can undo.
+and a pooled frame list hides which night each frame came from just when the
+calibrations differ most.
 
-Reduced separately, each night gets its own darks, flats and beam geometry,
+Reduced separately, each night gets its own darks, flats and beam alignment,
 and the per-cycle Stokes cubes -- one file per cycle, each carrying its own
 cycle's header -- are the right thing to join::
 

@@ -435,24 +435,40 @@ class NIRC2PolarimetryData(PolarimetryData):
     # enters the model with a factor 2, not 4
     rotator_keyword = _CONFIG["polarimetry"]["rotator_keyword"]
 
-    # Beam extraction geometry (detector rows/columns). Measured from the
-    # data by :func:`nirc2pol.reduction.fit_beam_geometry` and assigned before
-    # anything splits the beams.
+    # Beam extraction geometry (detector rows/columns). Nominal values from
+    # nirc2.toml, deliberately approximate: whatever they get wrong is
+    # measured and removed per frame by reduction.align_beams. See
+    # :meth:`beam_geometry_for` and the [beam_geometry] comment in the TOML.
     _announced_beam_geometry = False
-
-    # Where reduction.fit_beam_geometry starts looking. Not a value to
-    # reduce with: the geometry is measured from the data every time.
-    beam_geometry_search = (_CONFIG["beam_geometry"]["search_top_row_start"],
-                            _CONFIG["beam_geometry"]["search_beam_x_offset"])
-
-    def beam_geometry_seed(self):
-        """Starting point for the beam geometry search, as ``(top, xoff)``."""
-        return self.beam_geometry_search
 
     beam_height = 450       # rows in each beam cutout
     bottom_row_start = 0    # bottom beam: rows [0, beam_height)
-    top_row_start = None    # top beam: rows [start, start + beam_height)
-    beam_x_offset = None    # horizontal shift of top beam relative to bottom
+    top_row_start = _CONFIG["beam_geometry"]["default_top_row_start"]
+    beam_x_offset = _CONFIG["beam_geometry"]["default_beam_x_offset"]
+
+    @classmethod
+    def beam_geometry_for(cls, band):
+        """Nominal cutout geometry for a band, as ``(top_row, x_offset)``.
+
+        Parameters
+        ----------
+        band : str or None
+            Band name as :func:`nirc2pol.instruments.nirc2.band_of` returns
+            it. Unknown or None falls back to the defaults.
+
+        Returns
+        -------
+        tuple of int
+            Where :meth:`split_beams` should cut. Approximate by design --
+            :func:`nirc2pol.reduction.align_beams` removes the residual per
+            frame -- so an unlisted band is a fallback, not an error.
+        """
+        table = _CONFIG["beam_geometry"]
+        entry = table.get(band) if band else None
+        if isinstance(entry, dict):
+            return (int(entry["top_row_start"]), int(entry["beam_x_offset"]))
+        return (int(table["default_top_row_start"]),
+                int(table["default_beam_x_offset"]))
 
     # HWP fast axis offset theta_off [deg] entering the rotation model.
     # There is no trusted automatic source for this yet: it must be determined
@@ -580,8 +596,7 @@ class NIRC2PolarimetryData(PolarimetryData):
             Full detector frame.
         top_row_start : int, optional
             First detector row of the top beam. Defaults to the instrument
-            attribute; pass it explicitly to try a trial geometry, as
-            :meth:`fit_beam_geometry` does.
+            attribute; pass it explicitly to try a trial geometry.
         beam_x_offset : int, optional
             Column shift of the top beam relative to the bottom one.
             Defaults to the instrument attribute.
@@ -596,13 +611,22 @@ class NIRC2PolarimetryData(PolarimetryData):
         Raises
         ------
         ValueError
-            If the geometry is unset
+            If the geometry is unset -- which it is not by default, since the
+            nominal values come from ``nirc2.toml``.
 
         Notes
         -----
-        The geometry has to be set before this is called. It is measured
-        from the data by :func:`nirc2pol.reduction.fit_beam_geometry`, which is a
-        standard step of the reduction
+        These two integers are approximate by design and do not have to be
+        right. The cut only has to contain each beam; the offset it leaves
+        between them is measured and removed per frame by
+        :func:`nirc2pol.reduction.align_beams` during registration.
+
+        That is deliberate rather than lazy. The two beams are rotated
+        relative to each other by about 0.37 degrees, so the separation
+        depends on where in the field the source sits -- 2.2 px across a
+        300 px dither throw on real data. No single pair of integers is
+        correct at more than one field position, so pursuing an exact pair
+        here is chasing a value that does not exist.
         """
         top_row_start = (self.top_row_start if top_row_start is None
                          else top_row_start)
@@ -612,10 +636,11 @@ class NIRC2PolarimetryData(PolarimetryData):
             raise ValueError(
                 f"{type(self).__name__} has no beam geometry "
                 f"(top_row_start={top_row_start!r}, "
-                f"beam_x_offset={beam_x_offset!r}). It is measured from the "
-                "data rather than defaulted. Measure it with "
-                "reduction.fit_beam_geometry(instrument, frames) and assign "
-                "the result before reducing.")
+                f"beam_x_offset={beam_x_offset!r}). Nominal values come from "
+                "the [beam_geometry] table in nirc2.toml, so this means they "
+                "were explicitly cleared. Set them to roughly where the "
+                "beams are -- they need not be exact, since align_beams "
+                "removes the residual per frame.")
         
         data = np.asarray(frame.data if hasattr(frame, "header") else frame)
 
@@ -648,9 +673,9 @@ class NIRC2PolarimetryData(PolarimetryData):
         Returns
         -------
         str
-            The pair actually used. It is measured per reduction rather than
-            recorded per epoch, so without this a product could not say
-            which geometry produced it.
+            The pair actually used for the cutout. Approximate by design --
+            :func:`nirc2pol.reduction.align_beams` removes what it leaves --
+            so this records where the beams were cut, not a calibration.
         """
         return f"({self.top_row_start}, {self.beam_x_offset})"
 

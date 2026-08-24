@@ -66,14 +66,30 @@ Kp = "DOME"
 Ks = "DOME"
 
 # ---------------------------------------------------------------------------
-# Beam extraction geometry.
+# Beam extraction geometry: where split_beams cuts the two Wollaston beams
+# out of the detector.
 #
-# The Wollaston puts two beams on the detector, and it is currently unknown
-# whether their separation is constant between epochs. The separation itself
-# is NOT recorded here: it is measured from the data every time by
-# reduction.fit_beam_geometry. These are only where that search starts, from
-# prior reductions and tests.
+# These are approximate ON PURPOSE and do not need to be exact. Whatever they
+# get wrong is measured and removed per frame by reduction.align_beams, which
+# cross-correlates the two beams against each other after the cut. They only
+# have to be close enough that each cutout contains its beam.
+#
+# The Wollaston's splitting angle is chromatic, so the separation is a
+# function of BAND. The optic sits in a repeatable mount and does not move
+# between epochs: a model fitted to 2025-12-07 predicted an independent
+# 2025-12-08 dataset to 0.01 px.
+#
+# The two beams are also rotated relative to each other by about 0.37 deg
+# (measured on 2025-12-07 AB Aur, 94 frames over 186 px of field, confirmed by
+# cross-correlation), so their separation depends on where in the field the
+# source sits -- 2.2 px across a 300 px dither throw. No single pair of
+# integers is right everywhere, which is the other reason these are nominal
+# and the real work happens per frame.
 
 [beam_geometry]
-search_top_row_start = 500
-search_beam_x_offset = 12
+default_top_row_start = 505
+default_beam_x_offset = 13
+
+[beam_geometry.Lp]
+top_row_start = 505
+beam_x_offset = 13
