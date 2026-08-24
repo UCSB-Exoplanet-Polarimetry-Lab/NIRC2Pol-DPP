@@ -501,10 +501,53 @@ def choose_nearest_sky(frame, candidates, max_radius_arcsec=600.0,
     return ind, sky
 
 
+def rescale_sky(frame, sky):
+    """Scale a sky to the frame's exposure, if it was not taken at it.
+
+    A sky is counts accumulated over ``ITIME * COADDS``, so putting it on
+    another exposure is a multiplication -- exact on a linear detector, which
+    is why an exposure mismatch is worth correcting rather than avoiding.
+
+    Parameters
+    ----------
+    frame : Frame
+        The science frame the sky is for.
+    sky : Frame
+        The sky to scale.
+
+    Returns
+    -------
+    Frame
+        ``sky`` unchanged when the exposures already agree, otherwise a new
+        Frame carrying ``SKYSCL``, the factor applied.
+
+    Notes
+    -----
+    Warns whenever it scales. The correction is exact in principle, but a
+    large factor multiplies the sky's own read noise into every frame it is
+    subtracted from, so a factor far from 1 is worth seeing.
+    """
+    here = float(frame.get("ITIME", 1)) * float(frame.get("COADDS", 1))
+    there = float(sky.get("ITIME", 1)) * float(sky.get("COADDS", 1))
+    if there == 0 or here == there:
+        return sky
+
+    factor = here / there
+    log.warning(
+        "Scaling the sky for %s by %.4g: it was taken at ITIME %s x COADDS "
+        "%s and this frame is ITIME %s x COADDS %s. Exact on a linear "
+        "detector, but it scales the sky's own noise by the same factor.",
+        frame.get("FILENAME"), factor, sky.get("ITIME"), sky.get("COADDS"),
+        frame.get("ITIME"), frame.get("COADDS"))
+
+    scaled = Frame(sky.data * factor, sky.header.copy())
+    scaled["SKYSCL"] = (round(factor, 6), "sky scaled to this exposure")
+    return scaled
+
+
 def find_closest_sky(frame, master_skies, ranked_keylists=None,
                      max_radius_arcsec=600.0, same_pointing_arcsec=60.0):
-    """Find the best-matching sky, relaxing FILTER/ITIME/COADDS step by step
-        and rescaling by exposure time and coadds for the looser matches.
+    """Find the best sky for a frame: the nearest one, scaled to its exposure.
 
     Parameters
     ----------
@@ -513,9 +556,11 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None,
     master_skies : list of Frame
         Candidates.
     ranked_keylists : list of list of str, optional
-        Matching criteria from strictest to loosest.
+        Compatibility criteria. Only the **loosest** rung is used, as the
+        floor a sky must clear to be usable at all -- by default ``FILTER``,
+        which cannot be rescaled away.
     max_radius_arcsec : float, optional
-        Warn when even the nearest compatible sky is further than this.
+        Warn when the chosen sky was taken further away than this.
     same_pointing_arcsec : float, optional
         Skies within this of each other count as the same place; the tie is
         then broken by time.
@@ -529,10 +574,16 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None,
 
     Notes
     -----
-    The keylists decide which skies are *compatible*; among those,
-    :func:`choose_nearest_sky` decides which is *closest*. Compatibility
-    alone used to settle it by taking the first match, which on a night with
-    several sky sets meant whichever happened to be built first.
+    **Proximity outranks exposure.** A sky measures the background where and
+    when it was pointed; an exposure difference is a multiplication, exact on
+    a linear detector, while a pointing difference is not correctable at all.
+    Matching on exposure first inverted that: on a night whose three sky sets
+    each had their own ITIME, a target took the set that shared its exposure
+    -- 229 degrees away -- while its own sky, needing only a scale factor,
+    was never reached.
+
+    The filter still cannot be rescaled away, so it remains a floor rather
+    than a preference.
     """
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
                        else defaults.RANKED_SKIES_KEYLISTS)
@@ -540,41 +591,28 @@ def find_closest_sky(frame, master_skies, ranked_keylists=None,
     if not master_skies:
         return None, None
 
-    for rank, keylist in enumerate(ranked_keylists):
-        candidates = find_matching_masters(frame, master_skies, keylist)
-        if not candidates:
-            continue
-        ind, matched_sky = choose_nearest_sky(
-            frame, candidates, max_radius_arcsec, same_pointing_arcsec)
+    candidates = find_matching_masters(frame, master_skies,
+                                       ranked_keylists[-1])
+    if not candidates:
+        log.warning(
+            "No sky matches %s even on %s, so nothing is subtracted.",
+            frame.get("FILENAME"), ", ".join(ranked_keylists[-1]))
+        return None, None
 
-        if "COADDS" not in keylist and "ITIME" in keylist:
-            log.warning("Rescaling sky frame by COADDS %s -> %s",
-                        matched_sky["COADDS"], frame["COADDS"])
-            data = matched_sky.data / matched_sky["COADDS"] * frame["COADDS"]
-            matched_sky = Frame(data, matched_sky.header.copy())
-        elif "ITIME" not in keylist:
-            log.warning("Rescaling sky frame by ITIME %s -> %s and "
-                        "COADDS %s -> %s",
-                        matched_sky["ITIME"], frame["ITIME"],
-                        matched_sky["COADDS"], frame["COADDS"])
-            data = (matched_sky.data
-                    / (matched_sky["ITIME"] * matched_sky["COADDS"])
-                    * (frame["ITIME"] * frame["COADDS"]))
-            matched_sky = Frame(data, matched_sky.header.copy())
+    ind, matched_sky = choose_nearest_sky(
+        frame, candidates, max_radius_arcsec, same_pointing_arcsec)
+    matched_sky = rescale_sky(frame, matched_sky)
 
-        if matched_sky.shape != frame.shape:
-            if image_is_larger(matched_sky.data, frame.data):
-                cropped, _, _ = crop(matched_sky.data, frame.shape)
-                matched_sky = Frame(cropped, matched_sky.header.copy())
-            else:
-                log.warning("Sky frame is smaller than the target frame, "
-                            "not cropping: %s", frame.get("FILENAME"))
-                return None, None
+    if matched_sky.shape != frame.shape:
+        if image_is_larger(matched_sky.data, frame.data):
+            cropped, _, _ = crop(matched_sky.data, frame.shape)
+            matched_sky = Frame(cropped, matched_sky.header.copy())
+        else:
+            log.warning("Sky frame is smaller than the target frame, "
+                        "not cropping: %s", frame.get("FILENAME"))
+            return None, None
 
-        return ind, matched_sky
-
-    log.warning("No matching sky found")
-    return None, None
+    return ind, matched_sky
 
 
 def reduce_frame(frame, master_flats, master_darks, master_skies=None,
@@ -717,6 +755,9 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
             if interval is not None:
                 reduced["SKYDT"] = (round(float(interval), 1),
                                     "minutes from this frame to that sky")
+            if matched_sky.get("SKYSCL") is not None:
+                reduced["SKYSCL"] = (matched_sky["SKYSCL"],
+                                     "sky scaled to this frame's exposure")
 
     reduced.data = (reduced.data - dark_data) / flat_data
 
