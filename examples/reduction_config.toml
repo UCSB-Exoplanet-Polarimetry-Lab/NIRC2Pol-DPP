@@ -77,11 +77,20 @@ background_box = "none"
 # [r_inner, r_outer] for annulus. [px]
 background_annulus = "none"
 
+# Do NOT subtract the master skies from each science frame. Reads as a
+# double negative next to use_master_skies, and the two pair up:
+# use_master_skies decides whether the masters are BUILT, this decides
+# whether they are APPLIED. Both defaults off, so the sky is removed by
+# background_method inside the Stokes builder instead -- per Wollaston
+# beam, which is where it belongs. Set use_master_skies = true and
+# skip_sky_sub = false to subtract a master sky frame the old way.
+skip_sky_sub = true
+
 # Subtract dedicated master sky frames. Off by default: combined with a
 # mean-box or annulus background it removes the pedestal twice.
 use_master_skies = false
 
-[flats]
+[calibration]
 # Override which KIND of flat this band requires -- SKY (twilight) or DOME
 # (the dome screen). The instrument sets this per band already: sky at
 # L'/M, where the dome lamp is swamped by the thermal background, and dome
@@ -100,6 +109,32 @@ required_flat_type = "none"
 # science frame. Turn it on only when the matching darks genuinely do not
 # exist and you would rather have the flat than nothing.
 allow_flat_without_dark = false
+
+# Downgrade a wrong-kind flat from an error to a warning, and reduce with
+# it anyway. The frame records FLATMISM so the product says it happened.
+# Where required_flat_type changes WHICH kind is demanded, this stops the
+# demand being enforced at all -- so prefer setting required_flat_type
+# when you know what you want.
+allow_flat_type_mismatch = false
+
+# Reduce with no flat at all, dividing by ones. Off by default because it
+# leaves the detector response in the data and is easy to miss afterwards.
+allow_no_flat = false
+
+# Fewest frames that can make a master dark, flat or sky. A group smaller
+# than this is skipped with a warning -- and if that leaves no master at
+# all, the reduction carries on without one, so a night short of
+# calibration frames is quiet rather than fatal. Lower it deliberately,
+# knowing a two-frame master barely rejects a cosmic ray.
+master_min_frames = 3
+
+# How bad pixels are filled once identified.
+#
+#   interpolation  from the neighbours, which keeps a gradient across the
+#       pixel.
+#   median         the median of the surrounding box, which is flatter but
+#       more robust where a whole region is bad.
+replacement_method = "interpolation"
 
 [geometry]
 # Beam geometry, if you are overriding it. none measures it from the data,
@@ -181,6 +216,12 @@ ip_mask_radius = 22.0
 # written. Turn it off for a quick re-reduction whose calibration is
 # already on disk.
 save_preproc = true
+
+# Overwrite products already in the reduction folder. On by default, so
+# re-running a reduction replaces its own output rather than failing
+# halfway. Turn it off to make a folder write-once, and a second run will
+# stop rather than quietly replace what is there.
+overwrite_products = true
 
 # Keep the per-cycle Stokes cubes -- one FITS per HWP cycle in
 # <target>_stokes_cycles/, each carrying its own cycle's header. Off, the

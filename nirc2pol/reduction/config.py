@@ -42,6 +42,7 @@ BACKGROUND_METHODS = ("mean_box", "annulus", "dither", None)
 REGISTER_METHODS = ("smooth_peak", "quantile_peak", "max", "min", "gaussian",
                     "centroid", "silhouette", "symmetry", "wings", "crosscorr")
 FLAT_TYPES = ("SKY", "DOME", None)
+REPLACEMENT_METHODS = ("interpolation", "median")
 FAST_AXIS_METHODS = ("mm_model", "butterfly", "fixed")
 IP_METHODS = ("mm_model", "fit_uphi_per_cycle", "fit_uphi_all", None)
 
@@ -321,7 +322,7 @@ class ReductionConfig(TomlConfig):
         "reasonable, so the rule is enforced rather than preferred -- a "
         "mismatch raises. Set this when you have a considered reason, such "
         "as sky flats being the only usable ones you took in JHK.",
-        "flats", choices=FLAT_TYPES)
+        "calibration", choices=FLAT_TYPES)
     allow_flat_without_dark: bool = config_field(
         False,
         "Build a master flat even when no dark matches its exposure, "
@@ -330,7 +331,50 @@ class ReductionConfig(TomlConfig):
         "and divides into every science frame. Turn it on only when the "
         "matching darks genuinely do not exist and you would rather have "
         "the flat than nothing.",
-        "flats")
+        "calibration")
+    allow_flat_type_mismatch: bool = config_field(
+        False,
+        "Downgrade a wrong-kind flat from an error to a warning, and reduce "
+        "with it anyway. The frame records FLATMISM so the product says it "
+        "happened. Where required_flat_type changes WHICH kind is demanded, "
+        "this stops the demand being enforced at all -- so prefer setting "
+        "required_flat_type when you know what you want.",
+        "calibration")
+    allow_no_flat: bool = config_field(
+        False,
+        "Reduce with no flat at all, dividing by ones. Off by default "
+        "because it leaves the detector response in the data and is easy to "
+        "miss afterwards.",
+        "calibration")
+    master_min_frames: int = config_field(
+        3,
+        "Fewest frames that can make a master dark, flat or sky. A group "
+        "smaller than this is skipped with a warning -- and if that leaves "
+        "no master at all, the reduction carries on without one, so a night "
+        "short of calibration frames is quiet rather than fatal. Lower it "
+        "deliberately, knowing a two-frame master barely rejects a cosmic "
+        "ray.",
+        "calibration")
+    replacement_method: str = config_field(
+        "interpolation",
+        "How bad pixels are filled once identified.\n"
+        "\n"
+        "  interpolation  from the neighbours, which keeps a gradient "
+        "across the pixel.\n"
+        "  median         the median of the surrounding box, which is "
+        "flatter but more robust where a whole region is bad.",
+        "calibration", choices=REPLACEMENT_METHODS)
+    skip_sky_sub: bool = config_field(
+        True,
+        "Do NOT subtract the master skies from each science frame. Reads as "
+        "a double negative next to use_master_skies, and the two pair up: "
+        "use_master_skies decides whether the masters are BUILT, this "
+        "decides whether they are APPLIED. Both defaults off, so the sky is "
+        "removed by background_method inside the Stokes builder instead -- "
+        "per Wollaston beam, which is where it belongs. Set "
+        "use_master_skies = true and skip_sky_sub = false to subtract a "
+        "master sky frame the old way.",
+        "background")
     use_master_skies: bool = config_field(
         False,
         "Subtract dedicated master sky frames. Off by default: combined with "
@@ -425,6 +469,13 @@ class ReductionConfig(TomlConfig):
         "nothing downstream can run without them; this only says whether "
         "they are written. Turn it off for a quick re-reduction whose "
         "calibration is already on disk.",
+        "products")
+    overwrite_products: bool = config_field(
+        True,
+        "Overwrite products already in the reduction folder. On by default, "
+        "so re-running a reduction replaces its own output rather than "
+        "failing halfway. Turn it off to make a folder write-once, and a "
+        "second run will stop rather than quietly replace what is there.",
         "products")
     save_individual_cycles: bool = config_field(
         True,

@@ -139,7 +139,8 @@ def run(cfg, config_path=None):
     # frames are kept. They are built either way -- nothing downstream runs
     # without them -- so this is about disk, not about what the reduction does.
     darks = load_frames(sorted_files["darks"], rejects=rejects)
-    master_darks, dark_masks = make_master_darks(darks, instrument=instrument)
+    master_darks, dark_masks = make_master_darks(
+        darks, instrument=instrument, min_frames=cfg.master_min_frames)
     if master_darks and cfg.save_preproc:
         save_frames(paths.darks_file, master_darks)
 
@@ -150,6 +151,7 @@ def run(cfg, config_path=None):
         instrument=instrument,
         required_flat_type=cfg.required_flat_type,
         allow_flat_without_dark=cfg.allow_flat_without_dark,
+        min_frames=cfg.master_min_frames,
     )
     if master_flats and cfg.save_preproc:
         save_frames(paths.flats_file, master_flats)
@@ -158,7 +160,8 @@ def run(cfg, config_path=None):
     if cfg.use_master_skies:
         master_skies, _ = make_master_skies(
             load_frames(sorted_files["flats_sky"], rejects=rejects),
-            master_darks, instrument=instrument)
+            master_darks, instrument=instrument,
+            min_frames=cfg.master_min_frames)
         if master_skies and cfg.save_preproc:
             save_frames(paths.skies_file, master_skies)
 
@@ -185,6 +188,10 @@ def run(cfg, config_path=None):
             # kind for the build and then enforcing the band default when
             # matching would refuse the flats it had just made.
             required_flat_type=cfg.required_flat_type,
+            allow_flat_type_mismatch=cfg.allow_flat_type_mismatch,
+            allow_no_flat=cfg.allow_no_flat,
+            skip_sky_sub=cfg.skip_sky_sub,
+            replacement_method=cfg.replacement_method,
             gain=instrument.gain(frame),
             saturation_limit=instrument.saturation_limit(frame),
         )
@@ -292,7 +299,8 @@ def run(cfg, config_path=None):
     # ObslogPaths owns the night layout (raw/, reduced/, sequences/); the
     # writer owns the product set and its provenance, so it is rooted at
     # sequences/.
-    writer = ProductWriter(paths.sequences_folder, target=cfg.target)
+    writer = ProductWriter(paths.sequences_folder, target=cfg.target,
+                           overwrite=cfg.overwrite_products)
 
     # save_individual_cycles decides whether the per-cycle Stokes data is
     # kept: one FITS per cycle, each carrying its own cycle's header. Off,
