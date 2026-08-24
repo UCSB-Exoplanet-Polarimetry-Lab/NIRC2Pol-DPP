@@ -17,8 +17,9 @@ Layout under ``output_dir``::
     <target>_stokes_cycles/      one [I,Q,U] cube per HWP cycle, each with
                                  its own cycle's header
     <target>_median_stokes.fits  median-combined [I, Q, U]
-    <target>_PI.fits, _AoLP.fits, _DoLP.fits
-    <target>_Qphi.fits, _Uphi.fits
+    <target>_PI.fits, _AoLP.fits, _DoLP.fits    any source
+    <target>_Qphi.fits, _Uphi.fits              a disk; see
+                                                save_derived_products
 """
 
 from __future__ import annotations
@@ -224,9 +225,12 @@ class ProductWriter:
         return self._save(np.asarray(cube), header, "median_stokes",
                           step="median-combined Stokes cube", **params)
 
-    def save_derived_products(self, cube, header=None, center=None, **params):
-        """Write PI, AoLP, DoLP and the radial Stokes images derived from a
-                ``(3, ny, nx)`` Stokes cube.
+    def save_derived_products(self, cube, header=None, center=None,
+                              derived=True, radial=True, **params):
+        """Write the products derived from a ``(3, ny, nx)`` Stokes cube.
+
+        Two families, separately switchable, because they answer different
+        questions and one of them is not always a question.
 
         Parameters
         ----------
@@ -236,19 +240,44 @@ class ProductWriter:
             Header carried onto the products.
         center : tuple of float, optional
             Centre for the radial Stokes.
+        derived : bool, optional
+            Write PI, AoLP and DoLP -- polarized intensity, angle and degree.
+            They mean something for any source.
+        radial : bool, optional
+            Write Q_phi and U_phi. These are defined about a centre, so they
+            mean something only when the light is scattered from something
+            at that centre -- a disk. For a point source, a standard star,
+            they are a rotation of Q and U about an arbitrary point.
         **params
             Extra provenance parameters.
 
         Returns
         -------
-        list of str
-            Paths written.
+        dict
+            Product name -> path, for what was written.
         """
         from .stokes import polarization_products, radial_stokes
 
         cube = np.asarray(cube)
-        pi, aolp, dolp = polarization_products(cube)
-        q_phi, u_phi = radial_stokes(cube[1], cube[2], center=center)
+        wanted = []
+        if derived:
+            pi, aolp, dolp = polarization_products(cube)
+            wanted += [
+                ("PI", pi, "polarized intensity sqrt(Q^2+U^2)", {}),
+                ("AoLP", aolp, "angle of linear polarization 0.5*atan2(U,Q)",
+                 {"units": "deg"}),
+                ("DoLP", dolp, "degree of linear polarization PI/I", {}),
+            ]
+        if radial:
+            q_phi, u_phi = radial_stokes(cube[1], cube[2], center=center)
+            wanted += [
+                ("Qphi", q_phi, "radial Stokes Q_phi", {"center": center}),
+                ("Uphi", u_phi, "radial Stokes U_phi", {"center": center}),
+            ]
+        if not wanted:
+            log.info("No derived products requested; only the Stokes cube "
+                     "itself was written.")
+            return {}
 
         out = {}
         # BUNIT arrives on the header copied from a reduced frame, where it
@@ -256,13 +285,7 @@ class ProductWriter:
         # Stokes, which share those units, and wrong for the two derived
         # quantities that do not: DoLP is a ratio and AoLP is an angle. Each
         # product therefore states its own.
-        for name, data, step, extra in [
-                ("PI", pi, "polarized intensity sqrt(Q^2+U^2)", {}),
-                ("AoLP", aolp, "angle of linear polarization 0.5*atan2(U,Q)",
-                 {"units": "deg"}),
-                ("DoLP", dolp, "degree of linear polarization PI/I", {}),
-                ("Qphi", q_phi, "radial Stokes Q_phi", {"center": center}),
-                ("Uphi", u_phi, "radial Stokes U_phi", {"center": center})]:
+        for name, data, step, extra in wanted:
             unit = {"AoLP": "deg", "DoLP": ""}.get(name)
             out[name] = self._save(data, header, name, step=step, bunit=unit,
                                    **{**extra, **params})

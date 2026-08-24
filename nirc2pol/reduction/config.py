@@ -505,6 +505,22 @@ class ReductionConfig(TomlConfig):
         "failing halfway. Turn it off to make a folder write-once, and a "
         "second run will stop rather than quietly replace what is there.",
         "products")
+    save_derived_quantities: bool = config_field(
+        True,
+        "Write PI, AoLP and DoLP -- polarized intensity, and the angle and "
+        "degree of linear polarization. These mean something for any source, "
+        "so they are on by default.",
+        "products")
+    save_radial_stokes: bool = config_field(
+        False,
+        "Write Q_phi and U_phi. Off by default because they are defined "
+        "about a CENTRE: they mean something when the light is scattered "
+        "from something at that centre, which is to say a disk. For a point "
+        "source -- a polarization standard, say -- they are a rotation of Q "
+        "and U about an arbitrary point, and Q_phi is not a measurement of "
+        "anything. Turn it on for a disk, where U_phi is also the null "
+        "channel worth judging the reduction by.",
+        "products")
     save_individual_cycles: bool = config_field(
         True,
         "Keep the per-cycle Stokes cubes -- one FITS per HWP cycle in "

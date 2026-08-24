@@ -313,8 +313,9 @@ def run(cfg, config_path=None):
     median_cube = median_stokes_cube(stokes_cubes)
 
     # --- 8. products ---------------------------------------------------------
+    # THETAOFF is already on this header: build_stokes_cubes wrote it when
+    # it resolved the offset it actually used.
     header = cycles[0][0].header.copy()
-    header["THETAOFF"] = (theta_off, "fast axis offset [deg]")
 
     # ObslogPaths owns the night layout (raw/, reduced/, sequences/); the
     # writer owns the product set and its provenance, so it is rooted at
@@ -330,7 +331,9 @@ def run(cfg, config_path=None):
     if cfg.save_individual_cycles:
         writer.save_stokes_cycles(stokes_cubes, cycles, header=header)
     writer.save_median_stokes(median_cube, header=header)
-    writer.save_derived_products(median_cube, header=header)
+    writer.save_derived_products(median_cube, header=header,
+                                 derived=cfg.save_derived_quantities,
+                                 radial=cfg.save_radial_stokes)
 
     run_log.finish()
 

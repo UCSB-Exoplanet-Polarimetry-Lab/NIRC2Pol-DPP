@@ -62,6 +62,18 @@ class CombineConfig(TomlConfig):
         "Where the combined products are written. A folder of its own, not "
         "one of the inputs.",
         "paths")
+    save_derived_quantities: bool = config_field(
+        True,
+        "Write PI, AoLP and DoLP from the combined cube. They mean "
+        "something for any source, so they are on by default.",
+        "products")
+    save_radial_stokes: bool = config_field(
+        False,
+        "Write Q_phi and U_phi from the combined cube. Off by default: they "
+        "are defined about a centre, so they measure something only when "
+        "the light is scattered from something at it. Match this to what "
+        "the reductions being combined were run with.",
+        "products")
     target: str = config_field(
         "AB_Aur",
         "Names the product files, and selects which cycle cubes to read from "
@@ -217,7 +229,9 @@ def run(cfg, config_path=None):
     }
     writer = ProductWriter(out, target=cfg.target)
     writer.save_median_stokes(median_cube, header=header, **params)
-    writer.save_derived_products(median_cube, header=header, **params)
+    writer.save_derived_products(median_cube, header=header,
+                                 derived=cfg.save_derived_quantities,
+                                 radial=cfg.save_radial_stokes, **params)
 
     run_log.finish()
     return {"cubes": frames, "median_cube": median_cube, "writer": writer,

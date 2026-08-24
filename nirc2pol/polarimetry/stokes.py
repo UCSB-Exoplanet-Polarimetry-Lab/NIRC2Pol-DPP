@@ -351,6 +351,13 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
                 qu_rotation=theta_rot,
                 north_angle=(north if north is not None else "not derotated"))
 
+    # A readable keyword as well as the provenance line. The offset was only
+    # ever in the header because a caller happened to stamp it there, and
+    # anything reading it back -- nirc2pol.combine, or a person -- got None
+    # from products built any other way. It is known here, so it is written
+    # here, and every product built from this cycle's header inherits it.
+    cycle[0]["THETAOFF"] = (effective_offset, "fast axis offset [deg]")
+
     return np.stack([I, q_sky, u_sky], axis=0)
 
 
