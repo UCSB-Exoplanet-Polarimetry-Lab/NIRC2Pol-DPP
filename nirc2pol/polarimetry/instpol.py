@@ -8,9 +8,8 @@ not of the sky.
 One way to measure it is provided: :func:`fit_ip_uphi`, and its all-cycle
 counterpart :func:`fit_ip_uphi_all`, which minimize the U_phi residual.
 
-**That route assumes the source is azimuthally polarized, and there is
-currently no alternative that does not.** A mask-edge estimator used to live
-here -- normalized Stokes just outside the occulting mask or saturated core,
+**That route assumes the source is azimuthally polarized.** A mask-edge
+estimator used to live here -- normalized Stokes just outside the occulting mask or saturated core,
 where the light is the star's own and taken to be unpolarized, which assumes
 nothing about the target. It was withdrawn because it needs an annulus that
 is both disk-free and bright, and on the data available no such annulus
@@ -21,11 +20,21 @@ made U_phi worse than no correction at all. See the git history if it is
 wanted back.
 
 So on a target where azimuthal polarization is the hypothesis under test,
-this module has nothing to offer, and that is the honest position until the
-Mueller matrix model lands.
+this module has nothing to offer.
 
-These are a stopgap until that model, and are applied at the same point in
-the chain it will occupy.
+There is one route in the package that does, and it is not here:
+:func:`nirc2pol.polarimetry.fast_axis.fit_theta_off_polstd` with
+``fit_ip=True`` fits the leakage against a **polarized standard** whose sky
+angle is known from a catalogue, assuming nothing about morphology. It works
+because the leakage is fixed in the instrument frame while the star's
+polarization is fixed in the sky frame, so field rotation tells them apart --
+which is also its limitation: at a short rotation span the two are nearly the
+same column, and the fit answers with noise rather than with a leakage. It
+does not replace :func:`fit_ip_uphi` on one short sequence, and it needs a
+standard observed for the purpose. Use it where the rotation is there.
+
+These are a stopgap until the Mueller matrix model, and are applied at the
+same point in the chain it will occupy.
 
 **IP must be removed in the instrument frame, before the rotation into
 sky.** ``Q_sky = Q cos(theta_rot) + U sin(theta_rot)``, so subtracting
