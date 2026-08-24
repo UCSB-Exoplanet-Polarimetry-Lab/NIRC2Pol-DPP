@@ -26,6 +26,10 @@ log = logging.getLogger(__name__)
 # set once when a flat-type check has to be skipped for want of a table
 _WARNED_NO_FLAT_TYPE_TABLE = False
 
+#: Last flat reported as chosen, so a night using one flat says so once
+#: instead of once per frame. Only affects logging.
+_LAST_FLAT_CHOICE = None
+
 
 def find_matching_master(frame, masters, keylist):
     """First master whose header matches ``frame`` on every keyword in
@@ -126,7 +130,7 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
     differs per instrument. Without it the check is skipped and said so
     once, rather than being quietly dropped.
     """
-    from .masters import required_flat_type_for
+    from .masters import describe_flat, required_flat_type_for
     ranked_keylists = (ranked_keylists if ranked_keylists is not None
                        else defaults.RANKED_FLATS_KEYLISTS)
     ind, matched_flat = None, None
@@ -208,6 +212,20 @@ def find_closest_flat(frame, master_flats, ranked_keylists=None,
         log.warning("%s Proceeding because allow_flat_type_mismatch=True.",
                     message)
         matched_flat["FLATMISM"] = (True, "flat type does not match the band")
+
+    # What was actually chosen, said once per distinct flat rather than once
+    # per frame: a 92-frame night that uses one flat should say so once. The
+    # identity also goes onto the reduced frame below, so the file answers
+    # this without the log.
+    global _LAST_FLAT_CHOICE
+    choice = describe_flat(matched_flat)
+    if choice != _LAST_FLAT_CHOICE:
+        _LAST_FLAT_CHOICE = choice
+        log.info("%s (%s-band): using flat %s",
+                 frame.get("FILENAME"), band, choice)
+    else:
+        log.debug("%s (%s-band): using flat %s",
+                  frame.get("FILENAME"), band, choice)
 
     if matched_flat.shape != frame.shape:
         if image_is_larger(matched_flat.data, frame.data):
@@ -494,6 +512,19 @@ def reduce_frame(frame, master_flats, master_darks, master_skies=None,
         flat_checked = bool(matched_flat.get("FLATCHK", False))
         flat_mismatch = bool(matched_flat.get("FLATMISM", False))
         flat_substituted = bool(matched_flat.get("FLATSUB", False))
+
+        # Which flat this actually was. Without it a product records that it
+        # was flat-fielded and not what with, so the only evidence is a log
+        # line -- and on a night carrying flats in several bands, "which one
+        # did this frame get?" is exactly the question worth asking.
+        reduced["FLATFILT"] = (str(matched_flat.get("FILTER", "")),
+                               "filter of the flat used")
+        reduced["FLATTYPE"] = (str(matched_flat.get("FLATTYPE", "")),
+                               "kind of flat used (+NODARK if no dark)")
+        reduced["FLATPOL"] = (bool(matched_flat.get("POLFLAT", False)),
+                              "flat built from a critical-angle set")
+        reduced["FLATNFRM"] = (int(matched_flat.get("NFRAMES", 0)),
+                               "frames the flat was built from")
 
     # Whether the band flat-type rule was actually enforced, and whether a
     # mismatch was waved through. Both are recorded always, the way DARKSUB

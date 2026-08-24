@@ -229,6 +229,35 @@ def scrub_header(header):
     return clean
 
 
+def read_headers(paths):
+    """Headers only, without reading a single pixel.
+
+    For the questions that are answered by the header -- what band is this
+    night, what was the telescope pointing at -- where loading the data would
+    cost hundreds of megabytes to look at a few keywords.
+
+    Parameters
+    ----------
+    paths : iterable of str
+        FITS files.
+
+    Returns
+    -------
+    list of Header
+        In the order given. Files that cannot be opened are skipped with a
+        warning rather than stopping a reduction over one bad file.
+    """
+    from astropy.io import fits
+
+    headers = []
+    for path in paths:
+        try:
+            headers.append(fits.getheader(path))
+        except Exception as exc:
+            log.warning("Could not read the header of %s: %s", path, exc)
+    return headers
+
+
 def load_frames(frame_paths, rejects=()):
     """Load several FITS files, skipping rejected ones.
 

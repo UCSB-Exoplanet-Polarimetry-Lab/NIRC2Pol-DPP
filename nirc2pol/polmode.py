@@ -51,7 +51,8 @@ from nirc2pol.reduction import (fit_beam_geometry, make_master_darks,
                                 make_master_flats, make_master_masks,
                                 make_master_skies, reduce_frame)
 from nirc2pol.utils import (ObslogPaths, load_frames, load_rejects,
-                            save_frames, select_frames, start_reduction_log)
+                            read_headers, save_frames, select_frames,
+                            start_reduction_log)
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +145,14 @@ def run(cfg, config_path=None):
     if master_darks and cfg.save_preproc:
         save_frames(paths.darks_file, master_darks)
 
+    # Which bands the science frames are in, so the flats in those bands lead
+    # the inventory. Headers only -- the frames themselves are not loaded
+    # until step 3. Ordering only: find_closest_flat still requires the
+    # filter to match, so this cannot change which flat a frame gets.
+    science_bands = {nirc2.band_of(h)
+                     for h in read_headers(sorted_files["sci"])}
+    science_bands.discard(None)
+
     master_flats, flat_masks = make_master_flats(
         load_frames(sorted_files["flats_dome"], rejects=rejects),
         load_frames(sorted_files["flats_sky"], rejects=rejects),
@@ -152,6 +161,7 @@ def run(cfg, config_path=None):
         required_flat_type=cfg.required_flat_type,
         allow_flat_without_dark=cfg.allow_flat_without_dark,
         min_frames=cfg.master_min_frames,
+        science_bands=science_bands,
     )
     if master_flats and cfg.save_preproc:
         save_frames(paths.flats_file, master_flats)

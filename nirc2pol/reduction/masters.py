@@ -575,10 +575,36 @@ def required_flat_type_for(band, override=None, flat_types=None,
     return str(wanted).upper() if wanted else None
 
 
+def describe_flat(flat):
+    """One-line description of a master flat: filter, kind, pol, frames.
+
+    Shared by the log lines and the header bookkeeping so a flat is named
+    the same way wherever it is mentioned.
+
+    Parameters
+    ----------
+    flat : Frame
+        A master flat.
+
+    Returns
+    -------
+    str
+        e.g. ``"Lp + Wollaston SKY POL (n=4)"``.
+    """
+    pol = " POL" if flat.get("POLFLAT") else ""
+    return (f"{flat.get('FILTER')} {flat.get('FLATTYPE')}{pol} "
+            f"(n={flat.get('NFRAMES', 0)})")
+
+
 def flat_sort_key(flat, required_type=None, flat_types=None,
-                  default_flat_type=None):
+                  default_flat_type=None, science_bands=None):
     """Sort key implementing the flat preference order.
 
+        0. flats in a band the science data actually uses, when
+           ``science_bands`` says which those are. Without it the leading key
+           is the flat's own band as a string, so which band heads the list is
+           decided by the alphabet -- H before Lp -- which reads like a
+           judgement and is not one.
         1. filter, which groups the list; a flat in the wrong filter is never
            eligible in the first place, so this only makes the order readable
         2. the band-required type (sky for L'/M, dome for JHK) before the other
@@ -606,6 +632,12 @@ def flat_sort_key(flat, required_type=None, flat_types=None,
         Band to required type, from ``instrument.required_flat_types``.
     default_flat_type : str, optional
         Fallback for bands the mapping does not list.
+    science_bands : iterable of str, optional
+        Bands the science frames are in. Flats in one of them sort first.
+        Ordering only: which flat a frame actually gets is decided per frame
+        by :func:`nirc2pol.reduction.calibrate.find_closest_flat`, where the
+        filter must match, so this cannot change what is used -- only what
+        the list looks like when read.
 
     Returns
     -------
@@ -622,9 +654,10 @@ def flat_sort_key(flat, required_type=None, flat_types=None,
                                    default_flat_type)
 
     type_rank = 0 if base == wanted else 1
+    off_band = bool(science_bands) and band not in set(science_bands)
 
-    return (band, type_rank, nodark, not flat.get("POLFLAT", False),
-            -flat.get("NFRAMES", 0))
+    return (off_band, band, type_rank, nodark,
+            not flat.get("POLFLAT", False), -flat.get("NFRAMES", 0))
 
 
 def make_master_flats(dome_frames, sky_frames,
@@ -632,8 +665,8 @@ def make_master_flats(dome_frames, sky_frames,
                       modulator_keyword=None, critical_angles=None,
                       required_flat_type=None, required_flat_types=None,
                       default_required_flat_type=None,
-                      allow_flat_without_dark=False, instrument=None,
-                      **kwargs):
+                      allow_flat_without_dark=False, science_bands=None,
+                      instrument=None, **kwargs):
     """Build every available kind of flat and return a single ranked list:
         for any science frame, the first matching flat in the list is the best
         available one.
@@ -689,6 +722,9 @@ def make_master_flats(dome_frames, sky_frames,
     allow_flat_without_dark : bool, optional
         Build flats that no dark matched, tagging them ``+NODARK``. Off by
         default; see :func:`make_flats`.
+    science_bands : iterable of str, optional
+        Bands the science frames are in, so flats in those bands lead the
+        list. Ordering only -- see :func:`flat_sort_key`.
     **kwargs
         Passed through to the individual flat builders.
     instrument : PolarimetryData, optional
@@ -776,13 +812,16 @@ def make_master_flats(dome_frames, sky_frames,
     flats = dome_flats + sky_flats
     flats.sort(key=lambda f: flat_sort_key(
         f, required_flat_type, required_flat_types,
-        default_required_flat_type))
+        default_required_flat_type, science_bands))
 
     if flats:
-        log.info("Flat preference order: %s",
-                 ", ".join(f"{f.get('FILTER')}/{f.get('FLATTYPE')}"
-                           f"{'/POL' if f.get('POLFLAT') else ''}"
-                           f"(n={f['NFRAMES']})" for f in flats[:6]))
+        # An inventory, not a decision. Which flat a frame gets is settled
+        # per frame in find_closest_flat, on a filter that must match; this
+        # order only decides which of several *equally matching* flats is
+        # reached first, and reads as a ranking of the night if it is not
+        # said plainly.
+        log.info("%d master flat(s) available: %s", len(flats),
+                 ", ".join(describe_flat(f) for f in flats[:6]))
 
     masks = dome_masks + sky_masks
     return flats, masks
