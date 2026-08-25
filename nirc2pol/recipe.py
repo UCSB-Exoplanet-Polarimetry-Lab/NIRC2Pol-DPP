@@ -64,7 +64,8 @@ from nirc2pol.reduction import (background_stages, make_master_darks,
                                 make_master_flats, make_master_masks,
                                 make_master_skies, reduce_frame,
                                 subtract_dither_background)
-from nirc2pol.utils import (ObslogPaths, load_frames, load_rejects,
+from nirc2pol.utils import (Frame, ObslogPaths, frame_number, in_frame_range,
+                            load_frames, load_master, load_rejects,
                             read_headers, save_frames, select_frames,
                             start_reduction_log)
 
@@ -268,6 +269,8 @@ def build_masters(sorted_files, instrument, paths, rejects, cfg, *,
             save_frames(paths.skies_file, master_skies)
 
     master_masks = make_master_masks(dark_masks, flat_masks)
+    if master_masks and save_preproc:
+        save_master_masks(paths.masks_file, master_masks)
 
     return Masters(master_darks, master_flats, master_skies, master_masks)
 
@@ -609,7 +612,120 @@ def write_products(stokes_cubes, median_cube, cycles, paths, cfg, *,
     return writer
 
 
-def run(cfg, config_path=None):
+RESUME_LEVELS = (None, "masters", "reduced")
+
+
+def save_master_masks(path, masks):
+    """Write the shape -> bad-pixel-mask dict from :func:`make_master_masks`.
+
+    Stored as an ordinary multi-extension master file, one extension per
+    shape, so it reads back with the same machinery as the darks and flats.
+    The shape is the key and is recoverable from the array itself, so nothing
+    else has to be recorded.
+
+    Written only so a later run can resume: the mask is otherwise a byproduct
+    of building the darks and flats, and vanishes with them.
+    """
+    save_frames(path, [Frame(mask.astype(float)) for mask in masks.values()])
+
+
+def load_master_masks(path):
+    """Read back :func:`save_master_masks`. ``{}`` when the file is absent."""
+    return {tuple(f.data.shape): f.data > 0.5 for f in load_master(path)}
+
+
+def load_masters(paths):
+    """Masters a previous run wrote, or None if there are none to read.
+
+    Returns
+    -------
+    Masters or None
+
+    Raises
+    ------
+    ValueError
+        When the darks and flats are there but the bad-pixel mask is not.
+        The mask is a byproduct of building them, so a folder written before
+        :func:`save_master_masks` existed has no copy, and resuming without
+        it would reduce with no bad-pixel correction at all -- silently, and
+        differently from the run that made the folder.
+    """
+    darks = load_master(paths.darks_file)
+    flats = load_master(paths.flats_file)
+    if not darks and not flats:
+        return None
+
+    masks = load_master_masks(paths.masks_file)
+    if not masks:
+        raise ValueError(
+            f"{paths.darks_file} and {paths.flats_file} are there but "
+            f"{paths.masks_file} is not, so the bad-pixel mask cannot be "
+            "recovered -- it is a byproduct of building the masters, not "
+            "something rebuilt from them. Reduce from raw once to write it, "
+            "then resume.")
+
+    skies = load_master(paths.skies_file) or None
+    log.info("resumed masters: %d dark(s), %d flat(s), %s sky(s), %d mask(s)",
+             len(darks), len(flats),
+             len(skies) if skies else "no", len(masks))
+    return Masters(darks, flats, skies, masks)
+
+
+def load_reduced(paths, cfg):
+    """Corrected science frames a previous run wrote, or None if absent.
+
+    Raises
+    ------
+    ValueError
+        When the frames on disk do not match what ``cfg`` asks for. Two ways
+        that happens, both of which would otherwise reduce quietly and wrong:
+
+        A frame outside ``cfg.select_frame_range`` -- the folder was written
+        for a different selection, so resuming would reduce the wrong frames.
+
+        ``cfg.background_method`` asks for a dither and the frames carry no
+        ``DITHSUB`` -- they were written before the dither stage ran, so
+        resuming would go on with **no background subtracted at all**. That
+        is exactly how an L' reduction came to carry its full thermal
+        pedestal, so it is refused rather than warned about.
+    """
+    import glob as _glob
+
+    files = sorted(_glob.glob(os.path.join(paths.reduced_folder, "*.fits")))
+    if not files:
+        return None
+
+    frames = load_frames(files)
+
+    if cfg.select_frame_range:
+        stray = [os.path.basename(f) for f in files
+                 if not in_frame_range(frame_number(f),
+                                       cfg.select_frame_range)]
+        if stray:
+            raise ValueError(
+                f"{len(stray)} frame(s) in {paths.reduced_folder} fall "
+                f"outside select_frame_range={cfg.select_frame_range}, "
+                f"starting with {stray[0]}. That folder was written for a "
+                "different selection; reduce from raw rather than resuming "
+                "into it.")
+
+    if "dither" in background_stages(cfg.background_method):
+        undithered = [f for f in frames if not f.get("DITHSUB")]
+        if undithered:
+            raise ValueError(
+                f"background_method asks for a dither but {len(undithered)} "
+                f"of {len(frames)} frames in {paths.reduced_folder} carry no "
+                "DITHSUB, so they were written before the dither ran. "
+                "Resuming would continue with no background subtracted at "
+                "all. Reduce from raw.")
+
+    paths.check_frame_dates(frames)
+    log.info("resumed %d reduced frame(s) from %s",
+             len(frames), paths.reduced_folder)
+    return frames
+
+
+def run(cfg, config_path=None, resume=None):
     """Reduce one night, as ``cfg`` describes it.
 
     Parameters
@@ -622,6 +738,21 @@ def run(cfg, config_path=None):
         The config itself is copied into the reduction folder as
         ``reduction_<date>.toml`` regardless, so the run can be repeated from
         its own folder; this only records where it originally came from.
+    resume : {None, "masters", "reduced"}, optional
+        Pick up from what a previous run of the same folder left on disk.
+        None reduces from raw.
+
+        ``"masters"`` reloads the master darks, flats, skies and bad-pixel
+        mask and re-runs the science reduction -- for iterating on the
+        ``reduce_frame`` settings without rebuilding calibrations.
+
+        ``"reduced"`` reloads the corrected frames and skips straight to
+        cycle matching -- the bulk of the time, and what you want when
+        iterating on ``theta_off``, the leakage, the crop or the products.
+
+        Both need the previous run to have had ``save_preproc`` on, and both
+        refuse rather than guess when what is on disk does not match ``cfg``:
+        see :func:`load_masters` and :func:`load_reduced`.
 
     Returns
     -------
@@ -636,20 +767,52 @@ def run(cfg, config_path=None):
     above, and they are the same functions a notebook calls. There is one
     implementation of each stage, so the two cannot drift.
 
+    A resumed run takes the same stages from a later starting point, so a
+    resume and a reduction from raw produce the same products bit for bit.
+
     Writes as it goes -- masters, corrected frames, per-cycle and median
     Stokes products -- under ``cfg.reductions_root``. What is kept is itself a
     choice: see ``save_preproc`` and ``save_individual_cycles``.
     """
+    if resume not in RESUME_LEVELS:
+        raise ValueError(f"resume must be one of {RESUME_LEVELS}, "
+                         f"not {resume!r}")
+
     instrument, paths, rejects, run_log, raw_files = prepare_night(
         cfg, config_path)
 
-    sorted_files = sort_raw(raw_files, instrument)
-    masters = build_masters(sorted_files, instrument, paths, rejects, cfg)
-    sci_frames = select_science(sorted_files, paths, rejects, cfg)
-    reduced_frames = reduce_science(sci_frames, masters, instrument, cfg)
+    reduced_frames = load_reduced(paths, cfg) if resume == "reduced" else None
 
-    set_beam_cutout(reduced_frames, instrument, cfg)
-    reduced_frames = subtract_dither(reduced_frames, instrument, paths, cfg)
+    if reduced_frames is None:
+        if resume == "reduced":
+            raise ValueError(
+                f"resume='reduced' found no frames in {paths.reduced_folder}. "
+                "A previous run has to have written them, which needs "
+                "save_preproc on.")
+
+        sorted_files = sort_raw(raw_files, instrument)
+
+        masters = load_masters(paths) if resume == "masters" else None
+        if masters is None:
+            if resume == "masters":
+                raise ValueError(
+                    f"resume='masters' found no masters for {cfg.date} in "
+                    f"{cfg.reductions_root}. A previous run has to have "
+                    "written them, which needs save_preproc on.")
+            masters = build_masters(sorted_files, instrument, paths, rejects,
+                                    cfg)
+
+        sci_frames = select_science(sorted_files, paths, rejects, cfg)
+        reduced_frames = reduce_science(sci_frames, masters, instrument, cfg)
+
+        # The cutout is an instrument attribute, not something stored in the
+        # frames, so it is set on every path including a resume -- below.
+        set_beam_cutout(reduced_frames, instrument, cfg)
+        reduced_frames = subtract_dither(reduced_frames, instrument, paths,
+                                         cfg)
+    else:
+        set_beam_cutout(reduced_frames, instrument, cfg)
+
     cycles = match_cycles(reduced_frames, instrument)
 
     theta_off, ip = solve_fast_axis(cycles, instrument, cfg)
