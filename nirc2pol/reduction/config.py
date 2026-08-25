@@ -515,7 +515,23 @@ class ReductionConfig(TomlConfig):
         "scope is also the level it is applied at. mm_model is NOT "
         "IMPLEMENTED and raises. Both fit_uphi routes ASSUME AN AZIMUTHALLY "
         "POLARIZED SOURCE and return a confident, meaningless number where "
-        "that is the hypothesis under test. none leaves it uncorrected.",
+        "that is the hypothesis under test. none leaves it uncorrected.\n"
+        "\n"
+        "The leakage, instrumental polarization and IP are three names for "
+        "the same thing: the optics turning a little of I into Q and U, so "
+        "an unpolarized source comes out with Q = ipq*I and U = ipu*I. The "
+        "prose says leakage, the identifiers say ip.\n"
+        "\n"
+        "APPLIED BY polmode.run, not by configure(). This names a procedure "
+        "rather than a value, and the value it produces -- an "
+        "InstrumentalPolarization -- is what build_stokes_cubes takes as "
+        "ip=. So a script or notebook that configures an instrument and "
+        "builds Stokes cubes itself gets NO correction from setting this: it "
+        "has to run the fit and pass the result. See "
+        "examples/run_step_by_step.ipynb, stage 8, which does. Unlike "
+        "background_method, this cannot be applied for you -- the fit needs "
+        "theta_off as an input and every cycle at once, so there is no "
+        "per-frame hook to hang it on.",
         "instrumental_polarization", choices=IP_METHODS)
     ip_mask_radius: float = config_field(
         22.0,
