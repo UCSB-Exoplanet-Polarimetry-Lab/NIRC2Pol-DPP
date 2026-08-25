@@ -643,19 +643,31 @@ class ReductionConfig(TomlConfig):
         method, add an instrument, model a night the base class cannot
         describe. Setting five values is not a reason.
 
-        The beam cutout is assigned even when None, which is the usual case:
-        None means "use the nominal value for this band", which
-        :func:`nirc2pol.polmode.run` fills in from the instrument's
-        ``beam_geometry_for``. Setting it explicitly only moves where the
-        beams are cut; it is not a calibration, because
+        The beam cutout is assigned only when the config names one. None
+        means "use the nominal value", and the instrument already carries it
+        from the ``[beam_geometry]`` table in ``nirc2.toml`` -- so this
+        leaves it alone rather than overwriting it with None.
+        :func:`nirc2pol.polmode.run` then refines it to the night's band.
+
+        That distinction is the whole point: a caller who builds Stokes cubes
+        without going through ``polmode.run`` -- any notebook -- still gets a
+        working cutout. Setting it explicitly only moves where the beams are
+        cut; it is not a calibration, because
         :func:`nirc2pol.reduction.align_beams` removes whatever offset the
         cut leaves.
         """
         instrument.background_method = self.background_method
         instrument.background_box = self.background_box
         instrument.background_annulus = self.background_annulus
-        instrument.top_row_start = self.beam_top_row
-        instrument.beam_x_offset = self.beam_x_offset
+        # Only when the config actually names one. Assigning None here would
+        # CLEAR the nominal per-band values the instrument already carries
+        # from nirc2.toml, and nothing outside polmode.run puts them back --
+        # which left every notebook that calls apply() and then builds Stokes
+        # cubes directly raising out of split_beams.
+        if self.beam_top_row is not None:
+            instrument.top_row_start = self.beam_top_row
+        if self.beam_x_offset is not None:
+            instrument.beam_x_offset = self.beam_x_offset
         return instrument
 
 
