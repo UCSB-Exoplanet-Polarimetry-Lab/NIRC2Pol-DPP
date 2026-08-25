@@ -524,6 +524,12 @@ def aperture_polarization(stokes_cube, center=None, radius=None,
     leakage is of order 1-2%, which is larger than a typical standard star's
     signal, so a value from here is not comparable with a catalogue one
     unless ``cfg.ip_method`` removed it first.
+
+    To make it comparable -- and to get the fast axis offset out of the same
+    measurement -- see
+    :func:`nirc2pol.polarimetry.fast_axis.fit_theta_off_polstd`, which runs
+    this function once per HWP cycle and solves for theta_off, the leakage
+    and the polarimetric efficiency together against a catalogue angle.
     """
     from nirc2pol.utils.imutils import curve_of_growth, growth_radius
 
