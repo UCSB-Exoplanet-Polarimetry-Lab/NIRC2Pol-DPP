@@ -266,15 +266,15 @@ fit_radii = [25.0, 150.0]
 # unpolarized source comes out with Q = ipq*I and U = ipu*I. The prose
 # says leakage, the identifiers say ip.
 #
-# APPLIED BY polmode.run, not by configure(). This names a procedure
-# rather than a value, and the value it produces -- an
-# InstrumentalPolarization -- is what build_stokes_cubes takes as ip=. So
-# a script or notebook that configures an instrument and builds Stokes
-# cubes itself gets NO correction from setting this: it has to run the fit
-# and pass the result. See examples/run_step_by_step.ipynb, stage 8, which
-# does. Unlike background_method, this cannot be applied for you -- the
-# fit needs theta_off as an input and every cycle at once, so there is no
-# per-frame hook to hang it on.
+# APPLIED BY recipe.run, not by configure(). This names a procedure rather
+# than a value, and the value it produces -- an InstrumentalPolarization
+# -- is what build_stokes_cubes takes as ip=. So a script or notebook that
+# configures an instrument and builds Stokes cubes itself gets NO
+# correction from setting this: it has to run the fit and pass the result.
+# See examples/run_step_by_step.ipynb, stage 8, which does. Unlike
+# background_method, this cannot be applied for you -- the fit needs
+# theta_off as an input and every cycle at once, so there is no per-frame
+# hook to hang it on.
 # choices: 'mm_model', 'fit_uphi_per_cycle', 'fit_uphi_all', none
 ip_method = "mm_model"
 

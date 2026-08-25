@@ -9,7 +9,7 @@ Four layers, each talking only to the one below it::
 
 Every choice a reduction makes lives in a TOML config
 (:class:`nirc2pol.reduction.config.ReductionConfig`); ``nirc2pol-reduce``
-runs one end to end, and :func:`nirc2pol.polmode.run` is the same thing
+runs one end to end, and :func:`nirc2pol.recipe.run` is the same thing
 callable from a notebook.
 """
 

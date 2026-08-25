@@ -470,7 +470,7 @@ def background_stages(method):
     from 0.9% to 4.1%.
 
     ``"dither"`` must come first because it is not a beam-level operation at
-    all: it happens in :func:`nirc2pol.polmode.run`, on whole frames, before
+    all: it happens in :func:`nirc2pol.recipe.run`, on whole frames, before
     the beams are cut out. Writing it anywhere else would describe an order
     that cannot happen, so that is an error rather than a silent
     reordering.

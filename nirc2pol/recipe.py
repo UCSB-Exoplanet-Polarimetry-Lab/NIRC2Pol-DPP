@@ -24,7 +24,7 @@ workflow in order:
 it. Calling it directly is the same reduction, and it hands back everything
 it built, so a notebook can look at any of it::
 
-    from nirc2pol.polmode import run
+    from nirc2pol.recipe import run
     from nirc2pol.reduction.config import ReductionConfig
 
     products = run(ReductionConfig.from_toml("night.toml"))

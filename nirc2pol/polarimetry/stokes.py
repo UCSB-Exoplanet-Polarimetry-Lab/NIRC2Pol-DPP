@@ -539,7 +539,7 @@ def build_stokes_cubes(instrument, cycles, fast_axis_offset=None,
     cycles = [list(cycle) for cycle in cycles]
 
     # A config that declares a dither should get one. The stage runs on whole
-    # frames before the beams are cut, so polmode.run used to be the only
+    # frames before the beams are cut, so recipe.run used to be the only
     # caller and a notebook that set background_method=["dither"] quietly got
     # no background subtraction at all -- the L' pedestal left in, and a
     # flux-weighted centre pulled off the target by it.

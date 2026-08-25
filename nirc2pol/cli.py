@@ -1,7 +1,7 @@
 """The command line: ``nirc2pol-reduce`` and ``nirc2pol-combine``.
 
 A thin wrapper. Everything the reduction does is in
-:func:`nirc2pol.polmode.run`, and everything it *chooses* is in the TOML
+:func:`nirc2pol.recipe.run`, and everything it *chooses* is in the TOML
 config, so this file adds only argument parsing, log level, and the two
 lines printed at the end.
 
@@ -26,7 +26,7 @@ import sys
 from nirc2pol import __version__
 from nirc2pol.combine import CombineConfig
 from nirc2pol.combine import run as run_combine
-from nirc2pol.polmode import run
+from nirc2pol.recipe import run
 from nirc2pol.reduction.config import ReductionConfig
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")

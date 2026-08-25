@@ -113,7 +113,7 @@ built so you can look at any of it:
 
 ```python
 from nirc2pol.reduction.config import ReductionConfig
-from nirc2pol.polmode import run
+from nirc2pol.recipe import run
 
 products = run(ReductionConfig.from_toml("my_night.toml"))
 products["median_cube"].shape

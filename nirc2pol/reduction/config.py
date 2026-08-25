@@ -1,7 +1,7 @@
 """One place for every choice a reduction makes.
 
 A reduction has a lot of knobs, and they used to live as loose constants at
-the top of ``examples/process_polmode.py``, which made "where do the options
+the top of ``examples/process_recipe.py``, which made "where do the options
 live?" an unanswerable question. They live here now: :class:`ReductionConfig`
 holds every field, its default, what it means and what values it accepts, and
 validates them on construction.
@@ -522,7 +522,7 @@ class ReductionConfig(TomlConfig):
         "an unpolarized source comes out with Q = ipq*I and U = ipu*I. The "
         "prose says leakage, the identifiers say ip.\n"
         "\n"
-        "APPLIED BY polmode.run, not by configure(). This names a procedure "
+        "APPLIED BY recipe.run, not by configure(). This names a procedure "
         "rather than a value, and the value it produces -- an "
         "InstrumentalPolarization -- is what build_stokes_cubes takes as "
         "ip=. So a script or notebook that configures an instrument and "
@@ -681,10 +681,10 @@ class ReductionConfig(TomlConfig):
         means "use the nominal value", and the instrument already carries it
         from the ``[beam_geometry]`` table in ``nirc2.toml`` -- so this
         leaves it alone rather than overwriting it with None.
-        :func:`nirc2pol.polmode.run` then refines it to the night's band.
+        :func:`nirc2pol.recipe.run` then refines it to the night's band.
 
         That distinction is the whole point: a caller who builds Stokes cubes
-        without going through ``polmode.run`` -- any notebook -- still gets a
+        without going through ``recipe.run`` -- any notebook -- still gets a
         working cutout. Setting it explicitly only moves where the beams are
         cut; it is not a calibration, because
         :func:`nirc2pol.reduction.align_beams` removes whatever offset the
@@ -695,7 +695,7 @@ class ReductionConfig(TomlConfig):
         instrument.background_annulus = self.background_annulus
         # Only when the config actually names one. Assigning None here would
         # CLEAR the nominal per-band values the instrument already carries
-        # from nirc2.toml, and nothing outside polmode.run puts them back --
+        # from nirc2.toml, and nothing outside recipe.run puts them back --
         # which left every notebook that calls apply() and then builds Stokes
         # cubes directly raising out of split_beams.
         if self.beam_top_row is not None:
