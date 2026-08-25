@@ -237,10 +237,17 @@ def run(cfg, config_path=None):
     # this pair well -- the beams are rotated ~0.37 deg relative to each
     # other, so their separation depends on where the source sits in the
     # field and no single pair is right at more than one position.
-    if instrument.top_row_start is None or instrument.beam_x_offset is None:
+    # Keyed on the config, not on the instrument: cfg.apply() now leaves the
+    # instrument's nominal values in place rather than nulling them, so
+    # testing the instrument would never fire and the band-specific entry
+    # would never be reached.
+    if cfg.beam_top_row is None or cfg.beam_x_offset is None:
         band = nirc2.band_of(reduced_frames[0]) if reduced_frames else None
-        instrument.top_row_start, instrument.beam_x_offset = (
-            type(instrument).beam_geometry_for(band))
+        nominal_top, nominal_x = type(instrument).beam_geometry_for(band)
+        if cfg.beam_top_row is None:
+            instrument.top_row_start = nominal_top
+        if cfg.beam_x_offset is None:
+            instrument.beam_x_offset = nominal_x
     log.info("beam cutout: top row %d, x offset %d (nominal; align_beams "
              "removes the residual per frame)",
              instrument.top_row_start, instrument.beam_x_offset)
