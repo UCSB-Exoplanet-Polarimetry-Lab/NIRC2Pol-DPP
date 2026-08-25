@@ -16,11 +16,14 @@ which the command line and this script both call. For a reduction that
 departs from that recipe, call the module functions yourself:
 
     examples/tutorial.ipynb        each stage, one at a time, and what it is for
-    examples/ab_aur_manual.ipynb   the same stages on a real night, in order
-    examples/polarized_standard.ipynb   theta_off against a catalogue angle
+    examples/run_step_by_step.ipynb    this script's ten stages, opened up
+    examples/polarized_standard.ipynb  theta_off against a catalogue angle
 
-``ab_aur_manual.ipynb`` reproduces this script's output bit for bit, which
-is what makes it safe to start from when you need to change one step.
+``run_step_by_step.ipynb`` reproduces this script's output BIT FOR BIT,
+checked on an undithered night with no leakage correction and on a dithered
+one with the leakage fitted -- two configs that take different branches at
+stages 6 and 8. That is what makes it safe to start from when you need to
+change one step: the others are known to still agree.
 
 No ``sys.path`` juggling: the pipeline is installed (``pip install -e .``),
 so this runs from any directory.
