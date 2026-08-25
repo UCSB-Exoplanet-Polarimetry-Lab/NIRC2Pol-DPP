@@ -7,6 +7,13 @@ lines printed at the end.
 
     nirc2pol-reduce --template > my_night.toml   # every option and default
     nirc2pol-reduce my_night.toml                # run it
+    nirc2pol-reduce my_night.toml --resume reduced   # ...again, faster
+
+``--resume`` is a property of the invocation, not of the reduction, which is
+why it is a flag and not a config key: the config is copied into the reduction
+folder as the record of how that night was reduced, and a resumed run produces
+the same products as one from raw, so a ``resume`` line in that record would
+assert something about the data that is not true of it.
 
 ``nirc2pol-combine`` joins reductions that have already been run, by
 median-combining their per-cycle Stokes cubes -- see
@@ -26,10 +33,15 @@ import sys
 from nirc2pol import __version__
 from nirc2pol.combine import CombineConfig
 from nirc2pol.combine import run as run_combine
-from nirc2pol.recipe import run
+from nirc2pol.recipe import RESUME_LEVELS, ResumeError, run
 from nirc2pol.reduction.config import ReductionConfig
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+
+# Taken from the recipe rather than written out again, so the command line
+# cannot offer a level run does not accept. None is "reduce from raw", which
+# is what argparse gives when the flag is absent, so it is not a choice.
+RESUME_CHOICES = tuple(level for level in RESUME_LEVELS if level)
 
 
 def build_parser():
@@ -38,7 +50,8 @@ def build_parser():
     Returns
     -------
     argparse.ArgumentParser
-        Parses ``config``, ``--template``, ``--log-level`` and ``--version``.
+        Parses ``config``, ``--template``, ``--log-level``, ``--resume``
+        and ``--version``.
     """
     parser = argparse.ArgumentParser(
         prog="nirc2pol-reduce",
@@ -59,6 +72,19 @@ def build_parser():
         help=f"Console verbosity, one of {', '.join(LOG_LEVELS)} "
              "(default: INFO). The reduction log written beside the products "
              "is unaffected.")
+    parser.add_argument(
+        "--resume", choices=RESUME_CHOICES, metavar="STAGE", default=None,
+        help="Pick up from what a previous run of the same reductions_root "
+             "left on disk, instead of reducing from raw. "
+             "'reduced' reloads the corrected frames and goes straight to "
+             "cycle matching -- the bulk of the time -- for iterating on the "
+             "fast axis offset, the leakage, the crop or the products. "
+             "'masters' reloads the calibrations and re-runs the science "
+             "reduction, for iterating on how frames are flat-fielded and "
+             "sky-subtracted. Either way the products come out the same as a "
+             "reduction from raw. Both need the earlier run to have had "
+             "save_preproc on, and both refuse rather than guess when what "
+             "is on disk does not match the config.")
     parser.add_argument(
         "--version", action="version", version=f"nirc2pol-dpp {__version__}")
     return parser
@@ -136,11 +162,14 @@ def main(argv=None):
         return cfg
 
     try:
-        products = run(cfg, config_path=args.config)
-    except FileNotFoundError as exc:
-        # Data that is not where the config says it is: the user's to fix,
-        # and the message already explains it. Anything else propagates --
-        # a traceback says more about a bug than a summary would.
+        products = run(cfg, config_path=args.config, resume=args.resume)
+    except (FileNotFoundError, ResumeError) as exc:
+        # Data that is not where the config says it is, or a folder that does
+        # not match what --resume was asked to continue: the user's to fix,
+        # and both messages already explain it. Anything else propagates --
+        # a traceback says more about a bug than a summary would, and that is
+        # why ResumeError is named rather than catching ValueError, which
+        # would report a bug in the reduction as the user's mistake.
         print(exc, file=sys.stderr)
         return 2
 

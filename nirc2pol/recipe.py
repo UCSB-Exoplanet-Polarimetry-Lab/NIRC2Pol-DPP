@@ -615,6 +615,19 @@ def write_products(stokes_cubes, median_cube, cycles, paths, cfg, *,
 RESUME_LEVELS = (None, "masters", "reduced")
 
 
+class ResumeError(ValueError):
+    """A resume that cannot be honoured, and what to do instead.
+
+    Its own type rather than a bare ValueError so a caller can tell "this
+    folder does not match your config" from "something went wrong in the
+    reduction". ``nirc2pol-reduce`` catches this one and prints the message;
+    anything else it lets propagate, because a traceback says more about a
+    bug than a summary would.
+
+    Subclasses ValueError, so code that already catches that keeps working.
+    """
+
+
 def save_master_masks(path, masks):
     """Write the shape -> bad-pixel-mask dict from :func:`make_master_masks`.
 
@@ -657,7 +670,7 @@ def load_masters(paths):
 
     masks = load_master_masks(paths.masks_file)
     if not masks:
-        raise ValueError(
+        raise ResumeError(
             f"{paths.darks_file} and {paths.flats_file} are there but "
             f"{paths.masks_file} is not, so the bad-pixel mask cannot be "
             "recovered -- it is a byproduct of building the masters, not "
@@ -702,7 +715,7 @@ def load_reduced(paths, cfg):
                  if not in_frame_range(frame_number(f),
                                        cfg.select_frame_range)]
         if stray:
-            raise ValueError(
+            raise ResumeError(
                 f"{len(stray)} frame(s) in {paths.reduced_folder} fall "
                 f"outside select_frame_range={cfg.select_frame_range}, "
                 f"starting with {stray[0]}. That folder was written for a "
@@ -712,7 +725,7 @@ def load_reduced(paths, cfg):
     if "dither" in background_stages(cfg.background_method):
         undithered = [f for f in frames if not f.get("DITHSUB")]
         if undithered:
-            raise ValueError(
+            raise ResumeError(
                 f"background_method asks for a dither but {len(undithered)} "
                 f"of {len(frames)} frames in {paths.reduced_folder} carry no "
                 "DITHSUB, so they were written before the dither ran. "
@@ -775,8 +788,8 @@ def run(cfg, config_path=None, resume=None):
     choice: see ``save_preproc`` and ``save_individual_cycles``.
     """
     if resume not in RESUME_LEVELS:
-        raise ValueError(f"resume must be one of {RESUME_LEVELS}, "
-                         f"not {resume!r}")
+        raise ResumeError(f"resume must be one of {RESUME_LEVELS}, "
+                          f"not {resume!r}")
 
     instrument, paths, rejects, run_log, raw_files = prepare_night(
         cfg, config_path)
@@ -785,7 +798,7 @@ def run(cfg, config_path=None, resume=None):
 
     if reduced_frames is None:
         if resume == "reduced":
-            raise ValueError(
+            raise ResumeError(
                 f"resume='reduced' found no frames in {paths.reduced_folder}. "
                 "A previous run has to have written them, which needs "
                 "save_preproc on.")
@@ -795,7 +808,7 @@ def run(cfg, config_path=None, resume=None):
         masters = load_masters(paths) if resume == "masters" else None
         if masters is None:
             if resume == "masters":
-                raise ValueError(
+                raise ResumeError(
                     f"resume='masters' found no masters for {cfg.date} in "
                     f"{cfg.reductions_root}. A previous run has to have "
                     "written them, which needs save_preproc on.")

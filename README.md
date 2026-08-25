@@ -73,6 +73,24 @@ target          = "AB_Aur"
 nirc2pol-reduce my_night.toml
 ```
 
+Re-running after changing one setting does not have to redo the whole night:
+
+```
+nirc2pol-reduce my_night.toml --resume reduced   # straight to cycle matching
+nirc2pol-reduce my_night.toml --resume masters   # reuse the calibrations
+```
+
+`--resume reduced` reloads the corrected frames and skips to cycle matching,
+which is most of the time -- use it when iterating on the fast axis offset,
+the leakage, the crop or the products. `--resume masters` reloads the
+calibrations and re-runs the science reduction, for iterating on how frames
+are flat-fielded and sky-subtracted. Either way the products come out the same
+as a reduction from raw. Both need the earlier run to have had `save_preproc`
+on, and both refuse rather than guess when the folder does not match the
+config -- frames from a different selection, or frames written before the
+dither stage ran, which would otherwise carry on with no background subtracted
+at all.
+
 Those first two are deliberately separate. The frames stay wherever they are
 -- an archive, shared space, a mounted volume -- and are only ever read; the
 run symlinks the ones it needs into `reductions_root/raw/` and writes
