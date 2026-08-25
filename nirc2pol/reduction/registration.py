@@ -894,6 +894,52 @@ def align_beams(stack, fill=0.0, crop_size=128, upsample=20,
     return aligned, (dy, dx)
 
 
+def _on_source(image, cy, cx, frac=0.05, box=5):
+    """Is ``(cy, cx)`` sitting on real flux, or on blank sky?
+
+    Parameters
+    ----------
+    image : ndarray
+        The image the centre was found in.
+    cy, cx : float
+        Candidate centre.
+    frac : float, optional
+        Fraction of the peak-above-background a pixel must reach to count as
+        source. Deliberately low: this separates "on the object" from "on
+        empty sky", not bright from faint.
+    box : int, optional
+        Half-size of the median box, so one hot or dead pixel cannot decide
+        it either way.
+
+    Returns
+    -------
+    bool
+        True when the centre carries flux, and when the test cannot be made
+        at all -- an unusable image is not evidence of a bad centre, and this
+        only ever gates a warning.
+    """
+    data = np.asarray(image, dtype=float)
+    ny, nx = data.shape
+    iy, ix = int(round(cy)), int(round(cx))
+    if not (0 <= iy < ny and 0 <= ix < nx):
+        return False                      # off the frame entirely
+
+    finite = data[np.isfinite(data)]
+    if finite.size == 0:
+        return True
+    base = float(np.median(finite))
+    peak = float(np.nanmax(data))
+    if not np.isfinite(peak) or peak <= base:
+        return True                       # no source to be off
+
+    patch = data[max(0, iy - box):iy + box + 1,
+                 max(0, ix - box):ix + box + 1]
+    patch = patch[np.isfinite(patch)]
+    if patch.size == 0:
+        return True
+    return float(np.median(patch)) > base + frac * (peak - base)
+
+
 def register_beam_stack(stack, method="smooth_peak", fill=0.0,
                         align_beams_first=True, beam_align_crop=128,
                         check_beam_alignment=True, beam_alignment_tol=1.5,
@@ -1024,18 +1070,34 @@ def register_beam_stack(stack, method="smooth_peak", fill=0.0,
                     "align_beams_first is off, turn it on.",
                     dy, dx, beam_alignment_tol, beam_alignment_method)
 
-    # Sanity check: a centre far from the flux-weighted position of the
-    # source usually means the finder locked onto the frame rather than the
-    # star. Warn rather than silently registering to nonsense.
-    # ``crosscorr`` deliberately returns the point matching the template
-    # centre, which in a crowded field is nowhere near the brightest
-    # source, so the check does not apply to it.
+    # Sanity check: the failure this catches is a finder that locked onto the
+    # frame edge or an artefact instead of the source. Warn rather than
+    # silently registering to nonsense.
+    #
+    # Distance from the smoothed peak is NOT on its own evidence of that. On
+    # a resolved source the flux-weighted centre can sit anywhere inside it
+    # and still be right: Io is a ~105 px disk with a bright volcanic hotspot
+    # on the limb, so ``centroid`` correctly reports the disk centre 48 px
+    # from the peak, and a bare 30 px threshold called that "probably wrong"
+    # on all 176 frames of a reduction -- the exact opposite of the truth,
+    # repeated until nobody reads the log.
+    #
+    # So both conditions must hold: far from the peak AND sitting on nothing.
+    # A finder that has genuinely wandered off the source lands on blank sky,
+    # which is what separates it from a legitimate centroid on an extended
+    # one. ``crosscorr`` deliberately returns the point matching the template
+    # centre, which in a crowded field is nowhere near the brightest source,
+    # so the check does not apply to it.
     ref_cy, ref_cx = find_center_smooth(mean_beam)
-    if method != "crosscorr" and np.hypot(cy - ref_cy, cx - ref_cx) > 30:
-        log.warning("Centering method %r returned (%.1f, %.1f) but the "
-                    "smoothed peak is at (%.1f, %.1f) - %.0f px away; the "
-                    "registration is probably wrong", method, cy, cx,
-                    ref_cy, ref_cx, np.hypot(cy - ref_cy, cx - ref_cx))
+    distance = float(np.hypot(cy - ref_cy, cx - ref_cx))
+    if method != "crosscorr" and distance > 30 and not _on_source(
+            mean_beam, cy, cx):
+        log.warning("Centering method %r returned (%.1f, %.1f), which is "
+                    "%.0f px from the smoothed peak at (%.1f, %.1f) and "
+                    "carries no source flux -- the registration is probably "
+                    "wrong. If this source is genuinely extended, check "
+                    "whether the finder suits it.", method, cy, cx, distance,
+                    ref_cy, ref_cx)
 
     h, w = mean_beam.shape
     # (h-1)/2, not h/2 -- see center_frame. radial_stokes takes its azimuth
