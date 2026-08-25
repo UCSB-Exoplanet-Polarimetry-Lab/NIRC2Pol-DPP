@@ -22,13 +22,7 @@ it is azimuthally polarized, this needs a catalogue and assumes that
 catalogue -- which is exactly what makes agreement between them worth
 something.
 
-Two things this script exists to make hard to get wrong:
-
-**derotate=False.** ``prepare_cycles`` can fold the north angle into the Q/U
-rotation, and for radial Stokes that is exact. For the position angle of a
-point source it is not, and on the 2025-12-06 standard the difference is
-79 degrees. ``measure_cycles`` refuses folded cycles rather than let that
-pass, but the right thing is to not fold them.
+One thing this script exists to make hard to get wrong:
 
 **Fit it both ways.** Leaving the leakage in displaces the offset; fitting it
 removes the displacement and amplifies the noise. Which wins depends on the
@@ -88,9 +82,11 @@ cfg = ReductionConfig.from_toml(CONFIG_PATH)
 products = run(cfg, config_path=CONFIG_PATH)
 instrument, cycles = products["instrument"], products["cycles"]
 
-# derotate=False: see the module docstring. register_method comes from the
-# config so the photometry sees the same registration the products did.
-prepared = prepare_cycles(instrument, cycles, derotate=False,
+# register_method comes from the config so the photometry sees the same
+# registration the products did. Nothing else to choose: measure_cycles uses
+# only the instrument-to-sky frame rotation, never the north angle, so the
+# north-up question does not arise for an aperture sum.
+prepared = prepare_cycles(instrument, cycles,
                           register_method=cfg.register_method)
 print(f"\n{len(prepared)} complete HWP cycles")
 

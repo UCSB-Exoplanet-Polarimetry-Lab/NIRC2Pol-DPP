@@ -150,24 +150,36 @@ def butterfly_phase(Q, U, center=None, r_inner=0.0, r_outer=None):
 class PreparedCycle:
     """One HWP cycle reduced to the point where theta_off is still free.
 
-    Holds the instrument-frame Stokes planes plus the rotation angle that
-    would apply at ``theta_off = 0``. Trying a different offset is then one
+    Holds the instrument-frame Stokes planes plus the rotation that would
+    apply at ``theta_off = 0``. Trying a different offset is then one
     ``rotate_qu`` call rather than a re-reduction, which is what makes
     scanning cheap.
 
-    ``derotated`` records whether ``prepare_cycles`` folded the north angle
-    into ``rot_at_zero``. **That fold is exact for radial Stokes and wrong
-    for a position angle**, so it is not a detail to be looked up later: see
-    :func:`prepare_cycles`, and the guard in :func:`measure_cycles`.
+    **The rotation is kept as two separate numbers, deliberately.** They are
+    not interchangeable and they are not valid under the same conditions:
+
+    ``base_rot``
+        The instrument-to-sky Q/U frame rotation. This is what makes Q and U
+        *mean* anything, and it always applies.
+    ``north``
+        The angle to celestial north. Only needed to emulate turning the
+        *picture* north-up, which changes every pixel's azimuth phi. Since
+        only ``2*phi + theta`` enters the radial Stokes, that emulation is
+        an extra ``2*north`` on the frame -- exact for Q_phi/U_phi and
+        meaningless for anything that does not use phi at all.
+
+    Summing them into one angle is what makes it possible to apply the
+    second where it does not belong, so the choice is left to whoever
+    consumes this: see ``derotate_phi`` on :meth:`sky_qu`.
     """
 
     Q: np.ndarray
     U: np.ndarray
     I: np.ndarray
-    rot_at_zero: float      # eff. Q/U rotation [deg] at theta_off = 0
-    derotated: bool = False  # is 2*north folded into rot_at_zero?
+    base_rot: float         # instrument -> sky Q/U rotation [deg] at theta_off = 0
+    north: float = None     # cycle-mean north angle [deg], None if not read
 
-    def sky_qu(self, theta_off, ip=None):
+    def sky_qu(self, theta_off, ip=None, derotate_phi=True):
         """Rotate into the sky frame for a trial offset, removing ``ip``
                 first (in the instrument frame, where it belongs).
 
@@ -177,29 +189,57 @@ class PreparedCycle:
             Trial fast axis offset in degrees.
         ip : InstrumentalPolarization, optional
             Leakage removed before rotating.
+        derotate_phi : bool, optional
+            Also turn the frame by ``2*north``, which is what makes the
+            radial Stokes come out as though the image had been derotated to
+            north-up. On by default because this method exists to feed the
+            butterfly, which is radial Stokes throughout.
+
+            Leave it on for anything reading Q_phi or U_phi. It has no
+            meaning for a quantity that never uses phi -- an aperture sum
+            over a star, say -- where it is simply an extra rotation of the
+            polarization frame.
 
         Returns
         -------
         tuple of ndarray
             ``(Q_sky, U_sky)`` for this cycle at that offset.
+
+        Raises
+        ------
+        ValueError
+            If ``derotate_phi`` is asked for but the north angle was never
+            read (``prepare_cycles(read_north=False)``).
         """
         from .instpol import subtract_ip
         from .stokes import rotate_qu
 
+        rot = self.base_rot + OFFSET_TO_FRAME * float(theta_off)
+        if derotate_phi:
+            if self.north is None:
+                raise ValueError(
+                    "derotate_phi needs the north angle, and this cycle was "
+                    "prepared with read_north=False so it has none. Either "
+                    "re-prepare with read_north=True, or pass "
+                    "derotate_phi=False if the north-up azimuth is not "
+                    "wanted.")
+            rot += 2.0 * self.north
+
         Q, U = subtract_ip(self.Q, self.U, self.I, ip)
-        return rotate_qu(Q, U, self.rot_at_zero
-                         + OFFSET_TO_FRAME * float(theta_off))
+        return rotate_qu(Q, U, rot)
 
 
-def prepare_cycles(instrument, cycles, derotate=True, **dd_kwargs):
+def prepare_cycles(instrument, cycles, read_north=True, **dd_kwargs):
     """Reduce cycles to :class:`PreparedCycle` objects, theta_off still free.
 
-        Runs ``double_difference`` once per cycle and records the Q/U rotation
-        angle at ``theta_off = 0``. Spatial derotation is folded into that angle
-        rather than applied to pixels: rotating an image by an angle shifts every
-        azimuth by the same amount, and only ``2*phi + theta`` enters the radial
-        Stokes, so ``eff_rot = base_rot + 2*north`` is exactly equivalent and
-        costs no interpolation.
+        The reduction stopped at the last moment before theta_off is needed,
+        which is the whole point of it. Splitting the Wollaston beams,
+        registering them, averaging the four HWP angles and differencing them
+        is the expensive part and none of it depends on theta_off: the offset
+        enters at exactly one place, as the ``+ 4*theta_off`` term inside
+        ``qu_rotation_angle``, feeding a single ``rotate_qu``. So that work is
+        done once here and every trial offset afterwards costs one rotation of
+        two arrays -- which is what lets the butterfly scan a grid and iterate.
 
         ``**dd_kwargs`` are forwarded to ``double_difference``
         (``register_method``, ``register_kwargs``, ``critical_angles``, ...).
@@ -210,27 +250,26 @@ def prepare_cycles(instrument, cycles, derotate=True, **dd_kwargs):
         Instrument to reduce with.
     cycles : list of list of Frame
         Cycles to prepare.
-    derotate : bool, optional
-        Fold the north angle into the rotation, as the science reduction does.
+    read_north : bool, optional
+        Whether to look the north angle up from the headers and record it.
+        This is *only* a question of availability -- ``north_angle`` needs
+        ROTMODE, ROTPOSN and INSTANGL, which synthetic or hand-built frames
+        may not carry. Turning it off stores ``north=None`` and changes
+        nothing else.
 
-        **Only correct for radial Stokes.** The equivalence above holds
-        because only ``2*phi + theta`` enters Q_phi and U_phi, so turning the
-        image and turning the frame are the same thing. For the *absolute*
-        position angle of a point source they are not: ``build_stokes_cube``
-        rotates Q/U by ``theta_rot`` and then rotates the image by ``-north``
-        without touching Q/U again, so folding ``2*north`` in here adds a
-        rotation the science products do not have. Measured on the
-        2025-12-06 standard it moves the star's position angle from 100.8 deg
-        to 179.9. Pass ``derotate=False`` for anything reading an angle off a
-        point source -- :func:`measure_cycles` refuses the folded form rather
-        than let it pass silently.
+        It is **not** the question of whether to apply it. That is
+        ``derotate_phi`` on :meth:`PreparedCycle.sky_qu`, and it belongs
+        there because it depends on what is about to be measured -- radial
+        Stokes, which uses the pixel azimuth, or an aperture sum, which does
+        not. Nothing at this end of the chain can know which.
     **dd_kwargs
         Passed to ``double_difference``.
 
     Returns
     -------
     list of PreparedCycle
-        One per cycle, with theta_off still free.
+        One per cycle, with theta_off still free and the two rotation terms
+        kept apart.
     """
     from nirc2pol.utils.angles import mean_angle
 
@@ -242,28 +281,39 @@ def prepare_cycles(instrument, cycles, derotate=True, **dd_kwargs):
         base = float(mean_angle(
             [instrument.qu_rotation_angle(f, 0.0) for f in cycle]))
         north = (float(mean_angle([instrument.north_angle(f) for f in cycle]))
-                 if derotate else 0.0)
-        prepared.append(PreparedCycle(Q, U, I, base + 2.0 * north,
-                                      derotated=bool(derotate)))
+                 if read_north else None)
+        prepared.append(PreparedCycle(Q, U, I, base, north))
     return prepared
 
 
-def combine_at_offset(prepared, theta_off, ip=None):
+def combine_at_offset(prepared, theta_off, ip=None, derotate_phi=True):
     """Median-combine prepared cycles at a trial offset.
 
     Each cycle is rotated into the sky frame with its *own* rotation angle
     before combining — they differ, since parallactic angle and elevation
     change through a sequence — and only then median-combined.
 
+    ``derotate_phi`` is passed to :meth:`PreparedCycle.sky_qu` and defaults
+    on, since everything that combines cycles this way goes on to compute
+    radial Stokes.
+
+    Note the cycles are combined **without being aligned spatially** -- no
+    image is ever rotated here. That is exact for an azimuthally symmetric
+    pattern and smears one that is not, which on a sequence with a large
+    north swing leaves a shallower U_phi null than the science path reaches.
+    It does not move the offset: scanned both ways on AB Aur the minima agree
+    to better than 0.1 deg.
+
     Returns ``(Q, U, I)`` in the sky frame.
     """
-    qs, us = zip(*(p.sky_qu(theta_off, ip) for p in prepared))
+    qs, us = zip(*(p.sky_qu(theta_off, ip, derotate_phi=derotate_phi)
+                   for p in prepared))
     return (np.nanmedian(qs, axis=0), np.nanmedian(us, axis=0),
             np.nanmedian([p.I for p in prepared], axis=0))
 
 
 def _uphi_score(prepared, theta_off, ip, center, r_inner, r_outer,
-                score="uphi_sum"):
+                score="uphi_sum", derotate_phi=True):
     """Score one trial offset; lower is better.
 
     Parameters
@@ -293,7 +343,8 @@ def _uphi_score(prepared, theta_off, ip, center, r_inner, r_outer,
     """
     from .stokes import radial_stokes
 
-    Q, U, _ = combine_at_offset(prepared, theta_off, ip)
+    Q, U, _ = combine_at_offset(prepared, theta_off, ip,
+                                derotate_phi=derotate_phi)
     ny, nx = Q.shape
     c = center or ((ny - 1) / 2.0, (nx - 1) / 2.0)
     ro = r_outer if r_outer is not None else min(ny, nx) / 2.0 - 1.0
@@ -312,7 +363,8 @@ def _uphi_score(prepared, theta_off, ip, center, r_inner, r_outer,
 
 
 def scan_fast_axis_offset_butterfly(prepared, offsets=None, ip=None, center=None,
-                          r_inner=0.0, r_outer=None, score="uphi_sum"):
+                          r_inner=0.0, r_outer=None, score="uphi_sum",
+                          derotate_phi=True):
     """Score a grid of trial offsets. The diagnostic, not the solver.
 
     **Assumes the source is azimuthally polarized**, exactly as
@@ -358,7 +410,7 @@ def scan_fast_axis_offset_butterfly(prepared, offsets=None, ip=None, center=None
         offsets = np.arange(-22.5, 22.5, 0.25)
     offsets = np.asarray(offsets, dtype=float)
     scores = np.array([_uphi_score(prepared, t, ip, center, r_inner, r_outer,
-                                   score)
+                                   score, derotate_phi=derotate_phi)
                        for t in offsets])
     return offsets, scores
 
@@ -391,7 +443,7 @@ class FastAxisResult:
 
 def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
                          r_inner=20.0, r_outer=None, max_iter=10, tol=1e-3,
-                         derotate=True, scan=False, prepared=None,
+                         derotate_phi=True, scan=False, prepared=None,
                          **dd_kwargs):
     """Measure theta_off from the butterfly's orientation. The solver.
 
@@ -436,6 +488,11 @@ def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
         contribute. ``r_inner`` must clear the
         occulted or saturated core; the default 20 px suits NIRC2
         coronagraphic data and should be checked against the actual mask.
+    derotate_phi : bool, optional
+        Produce the radial Stokes as though the image had been derotated to
+        north-up, by turning the frame an extra ``2*north``. On by default,
+        and correct here: this is radial Stokes throughout. Turn it off only
+        for data whose headers carry no north angle at all.
     prepared : list of PreparedCycle, optional
         Reuse an existing reduction instead of redoing it — handy when
         fitting and scanning the same data.
@@ -456,13 +513,14 @@ def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
     there. Check that the integrated Q_phi is significant first.
     """
     if prepared is None:
-        prepared = prepare_cycles(instrument, cycles, derotate=derotate,
-                                  **dd_kwargs)
+        prepared = prepare_cycles(instrument, cycles,
+                                  read_north=derotate_phi, **dd_kwargs)
 
     theta_off = 0.0
     history, converged = [], False
     for it in range(1, max_iter + 1):
-        Q, U, _ = combine_at_offset(prepared, theta_off, ip)
+        Q, U, _ = combine_at_offset(prepared, theta_off, ip,
+                                    derotate_phi=derotate_phi)
         delta = butterfly_phase(Q, U, center=center, r_inner=r_inner,
                                 r_outer=r_outer)
         theta_off = wrap_offset(theta_off + delta / OFFSET_TO_FRAME)
@@ -476,8 +534,9 @@ def fit_fast_axis_butterfly(instrument, cycles, ip=None, center=None,
                             converged=converged,
                             delta_history=tuple(history))
     if scan:
-        result.scan = scan_fast_axis_offset_butterfly(prepared, ip=ip, center=center,
-                                            r_inner=r_inner, r_outer=r_outer)
+        result.scan = scan_fast_axis_offset_butterfly(
+            prepared, ip=ip, center=center, r_inner=r_inner, r_outer=r_outer,
+            derotate_phi=derotate_phi)
     if not converged:
         log.warning("On-sky fast axis fit did not converge in %d iterations "
                     "(last correction %.4f deg); the source may not be "
@@ -507,8 +566,10 @@ class ApertureCycles:
         ``q + i*u`` in the **instrument** frame, one per cycle, normalized
         by the intensity in the same aperture.
     base : ndarray
-        Each cycle's ``rot_at_zero`` [deg]: the Q/U rotation at zero offset,
-        with the north angle already folded in.
+        Each cycle's ``base_rot`` [deg]: the instrument-to-sky Q/U rotation
+        at zero offset. The north angle is deliberately **not** in it -- that
+        term only emulates turning the picture, and an aperture sum does not
+        care where the pixels are.
     flux : ndarray
         Summed intensity in the aperture, background removed. Not used by
         the fit; kept because a cycle whose flux is wildly out of line with
@@ -555,11 +616,11 @@ def measure_cycles(prepared, center=None, radius=None, background=None,
     Parameters
     ----------
     prepared : list of PreparedCycle
-        From :func:`prepare_cycles`, **with ``derotate=False``**. These hold
-        instrument-frame Q/U/I and ``rot_at_zero``, which is precisely the
-        per-cycle rotation the fit needs, so no re-reduction happens here.
-        Cycles prepared with ``derotate=True`` are refused: that fold is
-        right for radial Stokes and wrong for a position angle.
+        From :func:`prepare_cycles`. Only ``base_rot`` is used -- the frame
+        rotation that makes Q and U sky-referenced. The north angle is never
+        touched, because an aperture sum does not use the pixel azimuth and
+        so has no image derotation to emulate; there is nothing here to
+        configure and nothing to get wrong.
     center : tuple of float, optional
         ``(cy, cx)`` of the star. Resolved from the median intensity if not
         given.
@@ -605,16 +666,6 @@ def measure_cycles(prepared, center=None, radius=None, background=None,
     prepared = list(prepared)
     if not prepared:
         raise ValueError("measure_cycles needs at least one prepared cycle")
-    if any(getattr(c, "derotated", False) for c in prepared):
-        raise ValueError(
-            "these cycles were prepared with derotate=True, which folds "
-            "2*north into rot_at_zero. That fold is exact for radial Stokes, "
-            "where only 2*phi + theta enters, but it is wrong for the "
-            "position angle of a point source: build_stokes_cube rotates Q/U "
-            "by theta_rot and derotates the image without touching Q/U "
-            "again, so the fold adds a rotation the science products do not "
-            "have. On the 2025-12-06 standard it moves the measured angle by "
-            "79 deg. Re-run prepare_cycles with derotate=False.")
 
     if center is None or radius is None:
         # Resolve the defaults through aperture_polarization itself rather
@@ -639,7 +690,7 @@ def measure_cycles(prepared, center=None, radius=None, background=None,
             radius=radius, background=background,
             background_method=background_method, mask=mask)
         z.append(result["q"] + 1j * result["u"])
-        base.append(cycle.rot_at_zero)
+        base.append(cycle.base_rot)
         flux.append(result["I"])
 
     return ApertureCycles(np.array(z), np.array(base, dtype=float),
