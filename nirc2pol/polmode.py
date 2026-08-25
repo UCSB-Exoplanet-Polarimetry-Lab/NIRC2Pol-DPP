@@ -343,7 +343,8 @@ def run(cfg, config_path=None):
 
     stokes_cubes = build_stokes_cubes(instrument, cycles,
                                       fast_axis_offset=theta_off, ip=ip,
-                                      **dd_kwargs)
+                                      **dd_kwargs,
+                                      crop_size=cfg.crop_size)
     median_cube = median_stokes_cube(stokes_cubes)
 
     # --- 10. products ---------------------------------------------------------

@@ -182,6 +182,47 @@ def dither_positions(frames, tolerance_arcsec=2.0):
     return groups
 
 
+def _dither_throw_px(positions, instrument):
+    """Smallest separation between dither positions, in pixels.
+
+    Parameters
+    ----------
+    positions : dict
+        Position label -> frames, as :func:`dither_positions` returns. Labels
+        are ``(ra_off, dec_off)`` tuples in arcsec on the commanded path.
+    instrument : PolarimetryData
+        Supplies ``plate_scale`` in arcsec per pixel.
+
+    Returns
+    -------
+    float or None
+        The throw, or None when it cannot be derived -- fallback labels carry
+        no offsets, and an instrument may not declare a plate scale.
+
+    Notes
+    -----
+    Only the *magnitude* is wanted, so the detector rotation does not enter:
+    a separation in arcsec divided by the plate scale is a separation in
+    pixels whatever angle the field sits at. Checked against 2025-12-06 Io,
+    where a measured 290-316 px ghost separation is 2.9-3.1 arcsec, the
+    commanded throw.
+
+    The *smallest* separation, because the crop has to clear the nearest
+    ghost, not the average one.
+    """
+    scale = getattr(instrument, "plate_scale", None)
+    if not scale:
+        return None
+    offsets = [label for label in positions if isinstance(label, tuple)]
+    if len(offsets) < 2:
+        return None
+
+    seps = [np.hypot(a[0] - b[0], a[1] - b[1])
+            for i, a in enumerate(offsets) for b in offsets[i + 1:]]
+    seps = [s for s in seps if s > 0]
+    return float(min(seps) / scale) if seps else None
+
+
 def subtract_dither_background(frames, instrument, tolerance_arcsec=2.0,
                                critical_angles=None, atol=1.0):
     """Subtract the sky measured at another dither position, per frame.
@@ -255,6 +296,7 @@ def subtract_dither_background(frames, instrument, tolerance_arcsec=2.0,
             f"only a few arcsec, so a tolerance near it collapses them.")
 
     where = {id(f): label for label, group in positions.items() for f in group}
+    throw_px = _dither_throw_px(positions, instrument)
     when = {id(f): observed_at(f) for f in frames}
     critical_angles = (critical_angles if critical_angles is not None
                        else instrument.critical_angles)
@@ -306,6 +348,13 @@ def subtract_dither_background(frames, instrument, tolerance_arcsec=2.0,
             result.data = frame.data - partner.data
             result["DITHSUB"] = (str(partner.get("FILENAME", "")),
                                  "dither frame subtracted as sky")
+            # How far the ghost sits from the source, in pixels. Recorded
+            # rather than recomputed because it is what sizes the crop that
+            # removes the ghost, and a number that travels with the data can
+            # be checked against the image it describes.
+            if throw_px is not None:
+                result["DITHSEP"] = (float(throw_px),
+                                     "dither throw [px]: ghost offset")
             done[id(frame)] = result
             subtracted += 1
 

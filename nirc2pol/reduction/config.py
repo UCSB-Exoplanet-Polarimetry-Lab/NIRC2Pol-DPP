@@ -555,6 +555,24 @@ class ReductionConfig(TomlConfig):
         "anything. Turn it on for a disk, where U_phi is also the null "
         "channel worth judging the reduction by.",
         "products")
+    crop_size: int = config_field(
+        None,
+        "Side length of the final crop, in pixels. none DERIVES one, which "
+        "is the intended path -- you should not normally set this.\n"
+        "\n"
+        "A dithered frame carries a NEGATIVE copy of the source where the "
+        "partner exposure had it. On the 2025-12-06 Io data that ghost is "
+        "290-316 px away and as deep as the source is bright, and it "
+        "survives median-combining at half strength: the bright-object-and-"
+        "dark-object image. Cropping inside the throw removes it.\n"
+        "\n"
+        "Derived from the dither throw (the commanded offsets, over the "
+        "plate scale) and the source's own radius at 90% of its flux, so it "
+        "needs nothing from you and cannot be off by a unit conversion. Set "
+        "a value only to keep a specific field, or 0 to disable cropping "
+        "and leave any ghost in. Nothing is cropped when the data was not "
+        "dithered.",
+        "products", unit="px")
     dolp_min_intensity: float = config_field(
         0.001,
         "DoLP is written as NaN wherever |I| is below this fraction of the "

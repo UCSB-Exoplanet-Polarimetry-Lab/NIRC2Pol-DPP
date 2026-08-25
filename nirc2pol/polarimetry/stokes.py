@@ -268,10 +268,122 @@ def rotate_qu(Q, U, theta_rot_deg):
     return q_sky, u_sky
 
 
+def _dither_is_pending(instrument, frames):
+    """Does this instrument declare a dither the frames have not had?
+
+    Returns True only when ``"dither"`` is in the background chain AND at
+    least one frame lacks ``DITHSUB``. The header is the record of what was
+    actually done, so it is what decides -- which makes applying the dither
+    idempotent, and lets a caller who already ran it pass through untouched.
+    """
+    from nirc2pol.reduction.sky import background_stages
+
+    if "dither" not in background_stages(
+            getattr(instrument, "background_method", None)):
+        return False
+    return any(f.get("DITHSUB") in (None, "") for f in frames)
+
+
+def _crop_planes(planes, size):
+    """Crop planes to ``size`` about the registered centre.
+
+    Registration puts the source at ``((ny-1)/2, (nx-1)/2)`` and
+    :func:`azimuthal_angle` takes its origin from the same expression, so the
+    crop is taken about that exact point and sized odd -- which lands the
+    source on ``((size-1)/2)`` in the result. Half a pixel of disagreement
+    here leaks about 2% of a tangential disk into U_phi, which is what
+    ``validate_synthetic`` check 6 exists to catch.
+    """
+    from nirc2pol.utils.imutils import crop
+
+    ny, nx = np.asarray(planes[0]).shape
+    centre = ((ny - 1) / 2.0, (nx - 1) / 2.0)
+    try:
+        return tuple(crop(plane, (size, size), center=centre)[0]
+                     for plane in planes)
+    except ValueError:
+        log.warning("A %d px crop does not fit a %dx%d beam, so the planes "
+                    "are left uncropped and any dither ghost stays in them.",
+                    size, ny, nx)
+        return tuple(planes)
+
+
+def _crop_size_for(planes, cycle, requested=None, margin=8.0):
+    """How large a crop keeps the source and drops its dither ghost.
+
+    Parameters
+    ----------
+    planes : sequence of ndarray
+        The registered planes, source already at the array centre.
+    cycle : list of Frame
+        Supplies ``DITHSEP``, the throw in pixels recorded at dither time.
+    requested : int or None, optional
+        An explicit ``crop_size``. 0 or negative disables cropping. None
+        derives one.
+    margin : float, optional
+        Pixels of clearance between the crop edge and the ghost.
+
+    Returns
+    -------
+    int or None
+        Side length of the crop, or None for no crop.
+
+    Raises
+    ------
+    ValueError
+        When the throw is no larger than the source, so no crop can separate
+        them.
+
+    Notes
+    -----
+    Derived rather than configured. A pixel count asked of a user means
+    converting a throw from arcsec by hand, and getting it wrong fails
+    quietly one way -- ghost still in the image -- and destructively the
+    other -- source clipped. The throw comes from the commanded offsets and
+    the plate scale; the source radius from its own curve of growth.
+    """
+    from nirc2pol.utils.imutils import curve_of_growth, growth_radius
+
+    if requested is not None:
+        return int(requested) if int(requested) > 0 else None
+
+    throw = None
+    for frame in cycle:
+        value = frame.get("DITHSEP")
+        if value:
+            throw = float(value)
+            break
+    if not throw:
+        return None                    # not dithered: no ghost to remove
+
+    I = np.asarray(planes[0], dtype=float)
+    radii, enclosed = curve_of_growth(I)
+    r_src = growth_radius(radii, enclosed, 0.9)
+    if not np.isfinite(r_src) or r_src <= 0:
+        r_src = 0.0
+
+    if throw <= 2.0 * r_src:
+        raise ValueError(
+            f"The dither throw is {throw:.0f} px but the source reaches "
+            f"{r_src:.0f} px, so it overlaps its own negative ghost and no "
+            "crop can separate them. That also means the dither cannot "
+            "clean this target: either dither further, or use a different "
+            "background_method.")
+
+    half = throw - r_src - margin
+    half = min(half, (I.shape[0] - 1) / 2.0, (I.shape[1] - 1) / 2.0)
+    if half <= r_src:
+        return None                    # array is the binding constraint
+    size = int(2 * int(half) + 1)      # odd, so the centre stays a pixel
+    log.info("Cropping to %d px: dither throw %.0f px, source radius %.0f px "
+             "at 90%% of the flux, %.0f px margin.", size, throw, r_src, margin)
+    return size
+
+
 def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
                       critical_angles=CRITICAL_ANGLES, atol=1.0,
                       register_method="smooth_peak", derotate=True,
-                      register_kwargs=None, ip=None):
+                      register_kwargs=None, ip=None, crop_size=None):
     """Build one ``(3, ny, nx)`` Stokes cube [I, Q', U'] from one HWP cycle.
 
         Splits and registers the beams, double-differences the cycle, rotates
@@ -306,6 +418,14 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
     ndarray
         ``(3, ny, nx)`` cube of ``[I, Q, U]``.
     """
+    if _dither_is_pending(instrument, cycle):
+        raise ValueError(
+            "background_method declares 'dither' but these frames have no "
+            "DITHSUB, and one cycle is not enough to apply it: a dither "
+            "partner is usually in another cycle. Call "
+            "reduction.subtract_dither_background over all the frames "
+            "first, or use build_stokes_cubes, which does it for you.")
+
     Q, U, I = double_difference(instrument, cycle,
                                 critical_angles=critical_angles, atol=atol,
                                 register_method=register_method,
@@ -358,6 +478,16 @@ def build_stokes_cube(instrument, cycle, fast_axis_offset=None,
     # here, and every product built from this cycle's header inherits it.
     cycle[0]["THETAOFF"] = (effective_offset, "fast axis offset [deg]")
 
+    # Crop out the dither ghost, last, so everything above sees the full
+    # field and only the product is trimmed.
+    #
+    # An explicit size only. Deriving one HERE would measure the source
+    # separately in every cycle and get a slightly different answer each
+    # time -- 88, 89, 90, 91 px on the 2025-12-06 Io data -- so the cubes
+    # would not stack. build_stokes_cubes derives it once and passes it down.
+    if crop_size and int(crop_size) > 0:
+        I, q_sky, u_sky = _crop_planes((I, q_sky, u_sky), int(crop_size))
+
     return np.stack([I, q_sky, u_sky], axis=0)
 
 
@@ -406,13 +536,52 @@ def build_stokes_cubes(instrument, cycles, fast_axis_offset=None,
     ndarray
         ``(ncycles, 3, ny, nx)``.
     """
-    cycles = list(cycles)
+    cycles = [list(cycle) for cycle in cycles]
+
+    # A config that declares a dither should get one. The stage runs on whole
+    # frames before the beams are cut, so polmode.run used to be the only
+    # caller and a notebook that set background_method=["dither"] quietly got
+    # no background subtraction at all -- the L' pedestal left in, and a
+    # flux-weighted centre pulled off the target by it.
+    #
+    # Applied over the FLATTENED frame list, because a dither partner is
+    # usually in a different cycle and a per-cycle pass would find none.
+    # subtract_dither_background returns frames in input order, so the cycles
+    # reassemble by position.
+    flat = [f for cycle in cycles for f in cycle]
+    if flat and _dither_is_pending(instrument, flat):
+        from nirc2pol.reduction.sky import subtract_dither_background
+
+        log.info("background_method declares 'dither' and these frames have "
+                 "not had it, so it is being applied now over all %d frames "
+                 "of %d cycles.", len(flat), len(cycles))
+        done = subtract_dither_background(flat, instrument)
+        at = 0
+        for cycle in cycles:
+            cycle[:] = done[at:at + len(cycle)]
+            at += len(cycle)
+
     ips = _ip_per_cycle(kwargs.pop("ip", None), len(cycles))
+
+    # Build uncropped, then decide the crop once from the combined result and
+    # apply the same size to every cycle. The source radius has to be
+    # measured from a built plane, and measuring it per cycle gives a
+    # slightly different answer each time -- so cubes cropped independently
+    # would not stack.
+    requested = kwargs.pop("crop_size", None)
     cubes = [build_stokes_cube(instrument, cycle,
                                fast_axis_offset=fast_axis_offset, ip=ip,
                                **kwargs)
              for cycle, ip in zip(cycles, ips)]
-    return np.stack(cubes, axis=0)
+    stacked = np.stack(cubes, axis=0)
+
+    if cycles:
+        size = _crop_size_for(np.nanmedian(stacked, axis=0), cycles[0],
+                              requested=requested)
+        if size:
+            stacked = np.stack([np.stack(_crop_planes(cube, size), axis=0)
+                                for cube in stacked], axis=0)
+    return stacked
 
 
 def median_stokes_cube(stokes_cubes):
