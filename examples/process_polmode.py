@@ -13,9 +13,14 @@ template checked in beside this file.
 
 There is one copy of the reduction itself, in :func:`nirc2pol.polmode.run`,
 which the command line and this script both call. For a reduction that
-departs from that recipe, call the module functions yourself --
-``examples/tutorial.ipynb`` walks through them one at a time and explains
-what each is for.
+departs from that recipe, call the module functions yourself:
+
+    examples/tutorial.ipynb        each stage, one at a time, and what it is for
+    examples/ab_aur_manual.ipynb   the same stages on a real night, in order
+    examples/polarized_standard.ipynb   theta_off against a catalogue angle
+
+``ab_aur_manual.ipynb`` reproduces this script's output bit for bit, which
+is what makes it safe to start from when you need to change one step.
 
 No ``sys.path`` juggling: the pipeline is installed (``pip install -e .``),
 so this runs from any directory.
