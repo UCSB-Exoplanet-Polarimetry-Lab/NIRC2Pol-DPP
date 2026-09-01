@@ -7,7 +7,7 @@ The NIRC2 Polarimetry Data Processing Pipeline is an open-source, Python-based, 
 
 ## Documentation
 
-Coming soon!
+Coming soon! Docstrings as they stand _are not reliable_
 
 ## Features
 - Dark subtraction
